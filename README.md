@@ -57,20 +57,20 @@ mkdir -p ~/dreamos-builds
 
 # Start detached and named -- `sleep infinity` keeps it alive since
 # bash without a TTY would exit immediately in detached mode
-docker run -d --name dreambox \
+docker run -d --name dreamos-builder \
     -p 2222:22 \
     -v ~/dreamos-builds:/home/builder \
     ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:latest \
     sleep infinity
 
 # Open a shell inside it
-docker exec -it dreambox bash
+docker exec -it dreamos-builder bash
 
 # Open a second shell in another terminal (as many as you want)
-docker exec -it dreambox bash
+docker exec -it dreamos-builder bash
 
 # When done -- stop and remove
-docker stop dreambox && docker rm dreambox
+docker stop dreamos-builder && docker rm dreamos-builder
 ```
 
 `docker exec` shells survive Ctrl+D — the container keeps running until you `docker stop` it.
