@@ -58,6 +58,12 @@ RUN --mount=type=secret,id=pro-attach-config,required=true \
     # git-core PPA gives us a modern git (2.5x) instead of bionic's 2.17;
     # bitbake's git fetcher misbehaves on very old git versions.
     add-apt-repository -y ppa:git-core/ppa; \
+    # Ubuntu Pro's ESM pref file sits at Pin-Priority 550, which beats
+    # any PPA at default 500 -- so without this override apt would pick
+    # git 2.17.1+esmN over the PPA's 2.50.x every time. Pin git+git-man
+    # from git-core PPA at 600 so we actually get the modern version.
+    printf 'Package: git git-man\nPin: release o=LP-PPA-git-core-ubuntu-git-core-ppa\nPin-Priority: 600\n' \
+        > /etc/apt/preferences.d/git-core-ppa.pref; \
     # Silence pro's chatty stdout -- it prints the account email and
     # subscription summary which we don't want in public CI logs. Errors
     # still surface via stderr / non-zero exit.
