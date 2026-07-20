@@ -58,8 +58,10 @@ RUN --mount=type=secret,id=pro-attach-config,required=true \
     # git-core PPA gives us a modern git (2.5x) instead of bionic's 2.17;
     # bitbake's git fetcher misbehaves on very old git versions.
     add-apt-repository -y ppa:git-core/ppa; \
-    pro attach --attach-config /run/secrets/pro-attach-config; \
-    pro status; \
+    # Silence pro's chatty stdout -- it prints the account email and
+    # subscription summary which we don't want in public CI logs. Errors
+    # still surface via stderr / non-zero exit.
+    pro attach --attach-config /run/secrets/pro-attach-config >/dev/null; \
     apt-get update; \
     apt-get upgrade -y; \
     apt-get install --no-install-recommends -y \
