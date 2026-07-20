@@ -1,0 +1,149 @@
+# ---------------------------------------------------------------------
+# simplebuild4
+#
+# Builds the s4 container image from source that lives in a *different*
+# repository: GitLab common/simplebuild4. This workflow does NOT hold
+# the s4 source; it clones it at build time.
+#
+# Trigger flow:
+#   1. Someone pushes a git tag (e.g. `1.2.3`) to
+#      https://git.streamboard.tv/common/simplebuild4
+#   2. That repo's GitLab CI job posts a `repository_dispatch` to
+#      this repo (event_type: `simplebuild4-release`, client_payload:
+#      { tag, sha }).
+#   3. This workflow runs, clones s4 at the given SHA, overlays
+#      the Dockerfile + .dockerignore + docker-compose.yaml from this
+#      repo's `simplebuild4/` dir into the clone, and builds.
+#
+# Manual `workflow_dispatch` also works: leave `tag` empty to build
+# HEAD of the default branch and publish only `:latest`; or type a
+# tag name to reproduce a specific release.
+#
+# `:latest` promotion: only when the pushed tag is the highest
+# sortable tag in the s4 repo (`git tag -l | sort -V | tail -1`),
+# same guard as dreamos-buildsystem-* workflows.
+#
+# GHCR auth: standard `GITHUB_TOKEN` with `packages: write`. No PAT.
+# ---------------------------------------------------------------------
+
+name: simplebuild4
+
+on:
+  repository_dispatch:
+    types: [simplebuild4-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "s4 tag to build (e.g. 1.2.3). Empty = HEAD of default branch, publishes :latest only."
+        required: false
+        default: ""
+
+env:
+  IMAGE:      ghcr.io/wxbet-org/simplebuild4
+  GITLAB_URL: https://git.streamboard.tv/common/simplebuild4.git
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout docker-images (Dockerfile + overlays)
+        uses: actions/checkout@v5
+
+      - name: Determine tag + sha from trigger
+        id: src
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+              TAG="${{ github.event.client_payload.tag }}"
+              SHA="${{ github.event.client_payload.sha }}"
+          else
+              TAG="${{ inputs.tag }}"
+              SHA=""
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Tag='${TAG}', SHA='${SHA}'"
+
+      - name: Clone s4 source from GitLab
+        env:
+          TAG: ${{ steps.src.outputs.tag }}
+          SHA: ${{ steps.src.outputs.sha }}
+        run: |
+          # Full history clone — the Dockerfile does `git repack` on
+          # /app and `git tag -l | sort -V` needs to see every tag.
+          git clone "${GITLAB_URL}" s4-src
+          if [ -n "$SHA" ]; then
+              git -C s4-src checkout "$SHA"
+          elif [ -n "$TAG" ]; then
+              git -C s4-src checkout "refs/tags/$TAG"
+          fi
+          # else: stay on default branch HEAD
+
+      - name: Overlay build artefacts into clone
+        run: |
+          # These three files live only here (in docker-images), not in
+          # s4 — the s4 repo is source-of-truth for the application,
+          # this repo is source-of-truth for how it's containerised.
+          cp simplebuild4/Dockerfile          s4-src/Dockerfile
+          cp simplebuild4/.dockerignore       s4-src/.dockerignore
+          cp simplebuild4/docker-compose.yaml s4-src/docker-compose.yaml
+
+      - name: Determine version + :latest eligibility
+        id: tags
+        working-directory: s4-src
+        env:
+          TAG: ${{ steps.src.outputs.tag }}
+        run: |
+          if [ -z "$TAG" ]; then
+              # workflow_dispatch without a tag → publish :latest only
+              echo "version=latest" >> "$GITHUB_OUTPUT"
+              echo "tag_list=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+              echo "No tag given — will push :latest only"
+              exit 0
+          fi
+
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          HIGHEST=$(git tag -l | sort -V | tail -1)
+          TAG_LIST="${IMAGE}:${TAG}"
+          if [ "${TAG}" = "${HIGHEST}" ]; then
+              echo "Tag ${TAG} is the highest — also updating :latest"
+              TAG_LIST="${TAG_LIST},${IMAGE}:latest"
+          else
+              echo "Tag ${TAG} is not the highest (highest: ${HIGHEST}) — :latest untouched"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve SHA for IMAGE_COMMIT build-arg
+        id: build_sha
+        run: |
+          # Prefer the explicit SHA from the dispatch payload; fall back
+          # to whatever HEAD of the clone currently points at.
+          SHA="${{ steps.src.outputs.sha }}"
+          if [ -z "$SHA" ]; then
+              SHA=$(git -C s4-src rev-parse HEAD)
+          fi
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./s4-src
+          file: ./s4-src/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tag_list }}
+          build-args: |
+            IMAGE_COMMIT=${{ steps.build_sha.outputs.sha }}
+          no-cache: true

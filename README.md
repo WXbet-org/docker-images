@@ -1,6 +1,9 @@
 # docker-images
 
-Container images for WXbet-org, published to [ghcr.io/wxbet-org](https://github.com/orgs/WXbet-org/packages). Provides a reproducible opendreambox build environment on Ubuntu 18.04.
+Container images for WXbet-org, published to [ghcr.io/wxbet-org](https://github.com/orgs/WXbet-org/packages).
+
+- **`dreamos-buildsystem-*`** — reproducible opendreambox build environment on Ubuntu 18.04 (this repo hosts the Dockerfiles and the release CI). See the quickstart below.
+- **`simplebuild4`** — s4 build system (source lives in GitLab `common/simplebuild4`; this repo only hosts the Dockerfile and the release workflow, triggered from GitLab). See [simplebuild4 section](#simplebuild4) below.
 
 ## Quick start
 
@@ -171,9 +174,15 @@ dreamos-buildsystem-base            dreamos-buildsystem-sources
 │   ├── compose.sh                     regctl-based manifest composition
 │   ├── run.sh                         consumer helper
 │   └── README.md
+├── simplebuild4/                      s4 build artefacts (source stays in GitLab)
+│   ├── Dockerfile                     FROM ubuntu:26.04 + s4 runtime + apt/pip
+│   ├── .dockerignore                  build-context filter
+│   └── docker-compose.yaml            one-liner user deployment
 └── .github/workflows/
     ├── dreamos-buildsystem-base.yml   Builds base on tag push
-    └── dreamos-buildsystem-ubnt18.yml Composes ubnt18 on tag push
+    ├── dreamos-buildsystem-ubnt18.yml Composes ubnt18 on tag push
+    ├── simplebuild4.yml               Builds s4 on repository_dispatch from GitLab
+    └── cleanup-ghcr.yml               Weekly prune of orphaned untagged versions
 ```
 
 ## Images
@@ -183,6 +192,7 @@ dreamos-buildsystem-base            dreamos-buildsystem-sources
 | [`dreamos-buildsystem-base`](dreamos-buildsystem-base/README.md) | Toolchain only (~2 GB) | CI on `dreamos-buildsystem-base/vX.Y.Z` tag push |
 | [`dreamos-buildsystem-sources`](dreamos-buildsystem-sources/README.md) | ~11 GB OE sources snapshot at `/opt/dl-mirror` | Manually on the build server (`./build.sh` in that folder) |
 | [`dreamos-buildsystem-ubnt18`](dreamos-buildsystem-ubnt18/README.md) | Composed (~13 GB) — consumer-facing | CI on `dreamos-buildsystem-ubnt18/vX.Y.Z` tag push (composes base + sources on ghcr) |
+| [`simplebuild4`](simplebuild4/) | s4 cross-compilation build system (~1.5 GB) | CI on `repository_dispatch` from GitLab tag push (see [simplebuild4](#simplebuild4)) |
 
 ## Release
 
@@ -209,3 +219,34 @@ If you're tweaking the Dockerfile and just want to test a base build without cut
 ### `:latest` promotion
 
 Both base and ubnt18 `:latest` are updated only when the pushed version is the highest sortable `dreamos-buildsystem-ubnt18/*` tag (`git tag -l ... | sort -V | tail -1`). Guards against a late hotfix on an older branch accidentally overwriting `:latest`.
+
+## simplebuild4
+
+The [s4 build system](https://git.streamboard.tv/common/simplebuild4) is published as `ghcr.io/wxbet-org/simplebuild4`. The **source lives in GitLab**; this repo only holds the packaging (Dockerfile + .dockerignore + docker-compose.yaml) and the release workflow.
+
+### Trigger flow
+
+1. Someone pushes a git tag (e.g. `1.2.3`) to the GitLab s4 repo.
+2. The GitLab CI job in that repo POSTs a `repository_dispatch` to this repo (event type `simplebuild4-release`, payload `{ tag, sha }`).
+3. [`.github/workflows/simplebuild4.yml`](.github/workflows/simplebuild4.yml) runs, clones s4 at that SHA, overlays this repo's Dockerfile into the clone, and builds + pushes `ghcr.io/wxbet-org/simplebuild4:<tag>` (and `:latest` if this tag is the highest sortable one in s4).
+
+For a manual run — e.g. to rebuild an existing tag or build HEAD of the default branch — trigger the workflow via `workflow_dispatch` from the Actions tab (optional `tag` input).
+
+### GitLab-side setup
+
+The GitLab CI job needs a GitHub token to POST the dispatch:
+
+- Fine-grained PAT, scope `actions: write` on `WXbet-org/docker-images`.
+- Stored as protected CI variable `GH_DISPATCH_TOKEN` in the s4 GitLab project.
+
+### User deployment
+
+End users grab the shipped compose file from this repo's raw URL:
+
+```bash
+mkdir -p ~/s4-data && cd ~/s4-data
+curl -O https://raw.githubusercontent.com/WXbet-org/docker-images/master/simplebuild4/docker-compose.yaml
+docker compose up -d
+```
+
+Full docs (interactive TUI mode, headless web+mcp, data persistence, updates): [s4 wiki → Docker](https://git.streamboard.tv/common/simplebuild4/-/wikis/getting-started/docker).

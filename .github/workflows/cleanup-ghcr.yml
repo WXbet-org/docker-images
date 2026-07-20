@@ -12,7 +12,8 @@
 #
 # Requires GITHUB_TOKEN with `packages: write` (repo-level). The
 # packages themselves need each repo in their "Manage Actions access"
-# with the Write role (Settings on each package page).
+# with the Admin role (Settings on each package page) — Write allows
+# push but the DELETE API returns 403 without Admin.
 # ---------------------------------------------------------------------
 
 name: cleanup-ghcr
@@ -34,7 +35,7 @@ jobs:
         with:
           account: wxbet-org
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: 'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources'
+          image-names: 'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources simplebuild4'
           # tag-selection=untagged: only consider untagged versions.
           # image-tags='!*': never touch anything with any tag.
           # keep-n-most-recent=5: layered safety -- keep the 5 newest
