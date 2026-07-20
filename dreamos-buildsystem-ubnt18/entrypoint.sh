@@ -22,10 +22,11 @@ if [ ! -f "$HOME/.gitconfig" ]; then
 fi
 
 # Rewrite SSH URLs for github.com to https:// so clones of public forks
-# work without an SSH key mounted into the container. Both the short
-# form (`git@github.com:owner/repo`) and the long form used by bitbake's
-# git fetcher when `protocol=ssh` is set (`ssh://git@github.com/owner/repo`)
-# need to be caught.
+# work without an SSH key mounted into the container. Three variants
+# in the wild that all need catching:
+#   * short form:      git@github.com:owner/repo             (submodules)
+#   * long form:       ssh://git@github.com/owner/repo       (bitbake with protocol=ssh + user in URL)
+#   * long form no-user: ssh://github.com/owner/repo         (bitbake with protocol=ssh, no user)
 #
 # --unset-all + --add pattern makes the setup idempotent across restarts
 # (no duplicate entries pile up in ~/.gitconfig).
@@ -35,6 +36,7 @@ fi
 git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
 git config --global --add       url."https://github.com/".insteadOf "git@github.com:"
 git config --global --add       url."https://github.com/".insteadOf "ssh://git@github.com/"
+git config --global --add       url."https://github.com/".insteadOf "ssh://github.com/"
 
 # Generate host keys on first start (idempotent -- only creates missing ones).
 if [ ! -f /etc/ssh/ssh_host_ed25519_key ] || [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
