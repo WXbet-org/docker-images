@@ -115,6 +115,22 @@ jobs:
           fi
           echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
 
+      - name: Pre-pull sources base image (retry vs transient ghcr 429)
+        # docker/build-push-action doesn't retry on rate-limit responses;
+        # do the pull ourselves with a short backoff loop so a hiccup
+        # from ghcr doesn't fail the whole run.
+        run: |
+          for i in 1 2 3 4 5; do
+            if docker pull ghcr.io/wxbet-org/dreamos-buildsystem-sources:latest; then
+              exit 0
+            fi
+            wait=$((i*10))
+            echo "pull attempt $i failed, retrying in ${wait}s..."
+            sleep $wait
+          done
+          echo "::error::sources image pull failed after 5 attempts"
+          exit 1
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
