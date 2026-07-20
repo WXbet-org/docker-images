@@ -184,19 +184,28 @@ dreamos-buildsystem-base            dreamos-buildsystem-sources
 | [`dreamos-buildsystem-sources`](dreamos-buildsystem-sources/README.md) | ~11 GB OE sources snapshot at `/opt/dl-mirror` | Manually on the build server (`./build.sh` in that folder) |
 | [`dreamos-buildsystem-ubnt18`](dreamos-buildsystem-ubnt18/README.md) | Composed (~13 GB) — consumer-facing | CI on `dreamos-buildsystem-ubnt18/vX.Y.Z` tag push (composes base + sources on ghcr) |
 
-## Release convention
+## Release
 
-Git tags are prefixed with the image name:
+**One tag does the whole release.** Push `dreamos-buildsystem-ubnt18/vX.Y.Z` and the workflow:
 
+1. Builds the base image with fresh apt/ESM patches (`--no-cache`), pushes it as `dreamos-buildsystem-base:vX.Y.Z` + `:latest`
+2. Composes the ubnt18 image on ghcr from the just-built base + the current `dreamos-buildsystem-sources:latest`, pushes as `dreamos-buildsystem-ubnt18:vX.Y.Z` + `:latest`
+
+```sh
+git tag dreamos-buildsystem-ubnt18/v0.3.0
+git push origin dreamos-buildsystem-ubnt18/v0.3.0
 ```
-dreamos-buildsystem-base/v0.3.0        → publishes ghcr .../dreamos-buildsystem-base:v0.3.0
-dreamos-buildsystem-ubnt18/v0.3.0      → composes and publishes ghcr .../dreamos-buildsystem-ubnt18:v0.3.0
-```
 
-Sources is manually versioned (or just `:latest` — its release cadence is different).
+Total time: ~5 min for phase 1 (apt install), ~30 sec for phase 2 (regctl compose).
 
-Typical release flow:
+Base and ubnt18 always share the same version number by design — every ubnt18 release is a matched pair with its base.
 
-1. Push `dreamos-buildsystem-base/vX.Y.Z` → CI builds and pushes the base image
-2. Push `dreamos-buildsystem-ubnt18/vX.Y.Z` → CI composes ubnt18 = latest base + latest sources, pushes to ghcr
-3. `:latest` is auto-updated to the highest sortable version
+The sources image has its own release cadence and is built + tagged manually on the build server. Refreshing sources requires a subsequent ubnt18 release to compose it in.
+
+### For base-only iteration
+
+If you're tweaking the Dockerfile and just want to test a base build without cutting a release, trigger the `dreamos-buildsystem-base` workflow via **workflow_dispatch** from the Actions tab. It pushes `dreamos-buildsystem-base:latest` only, no ubnt18 composition.
+
+### `:latest` promotion
+
+Both base and ubnt18 `:latest` are updated only when the pushed version is the highest sortable `dreamos-buildsystem-ubnt18/*` tag (`git tag -l ... | sort -V | tail -1`). Guards against a late hotfix on an older branch accidentally overwriting `:latest`.

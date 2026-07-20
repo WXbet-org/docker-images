@@ -15,10 +15,12 @@
 
 name: dreamos-buildsystem-base
 
+# Manual trigger only. For a full release (base + composed ubnt18), push
+# a dreamos-buildsystem-ubnt18/vX.Y.Z tag -- that workflow builds base
+# as its first phase and composes ubnt18 as the second. This workflow
+# is only for testing base changes in isolation without publishing an
+# ubnt18 image.
 on:
-  push:
-    tags:
-      - 'dreamos-buildsystem-base/*'
   workflow_dispatch:
 
 env:

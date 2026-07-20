@@ -24,17 +24,8 @@ NO_CACHE=1 ./build.sh         # force fresh apt / ESM patches
 TAG=dreamos-buildsystem-base:2026-07-20 ./build.sh
 ```
 
-## Publish (typically CI)
+## Publish
 
-Tagging `dreamos-buildsystem-base/vX.Y.Z` and pushing triggers the CI workflow:
+The **normal way** to publish is not via this image alone — push a `dreamos-buildsystem-ubnt18/vX.Y.Z` tag and the release pipeline builds base + composes ubnt18 in one workflow. Both images end up with the same version tag.
 
-```sh
-git tag dreamos-buildsystem-base/v0.3.0
-git push origin dreamos-buildsystem-base/v0.3.0
-```
-
-Pushed to `ghcr.io/wxbet-org/dreamos-buildsystem-base:vX.Y.Z` + `:latest`.
-
-## After a base rebuild
-
-Trigger the `compose-ubnt18` workflow (or push a `dreamos-buildsystem-ubnt18/vX.Y.Z` tag) so the composed image on ghcr picks up the new base layers. See the ubnt18 README for the composition mechanics.
+For **isolated base testing** (Dockerfile tweaks etc. without cutting a full release), trigger `dreamos-buildsystem-base` via **workflow_dispatch** from the Actions tab. It pushes `dreamos-buildsystem-base:latest` only.

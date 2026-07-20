@@ -1,15 +1,23 @@
 # ---------------------------------------------------------------------
-# dreamos-buildsystem-ubnt18 (composed)
+# dreamos-buildsystem-ubnt18 (release pipeline)
 #
-# Composes the consumable ubnt18 image on the registry from:
-#   * dreamos-buildsystem-base:latest      (toolchain, built by base workflow)
-#   * dreamos-buildsystem-sources:latest   (data snapshot, built manually)
+# One tag, one workflow, one release. Pushing dreamos-buildsystem-ubnt18/vX.Y.Z
+# runs the full pipeline sequentially in one job:
 #
-# Uses regctl and OCI cross-repo blob mount -- no layer blobs are
-# downloaded to the runner. Runtime: ~30 seconds. See the compose.sh
-# script in this image folder for the actual mechanics.
+#   Phase 1: Build the base image (Ubuntu 18.04 + Pro/ESM + toolchain)
+#            and push to ghcr.io/wxbet-org/dreamos-buildsystem-base:vX.Y.Z (+ :latest)
 #
-# Tag scheme: dreamos-buildsystem-ubnt18/<version>
+#   Phase 2: Compose the ubnt18 image on ghcr from the just-built base +
+#            the existing sources image. Uses regctl and OCI cross-repo
+#            blob mount -- no layer blobs downloaded. Pushes to
+#            ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:vX.Y.Z (+ :latest)
+#
+# `:latest` on both images is only updated when this tag is the highest
+# sortable dreamos-buildsystem-ubnt18/* tag (guards against late hotfixes
+# on older branches overwriting :latest).
+#
+# For base-only testing (no release), trigger dreamos-buildsystem-base.yml
+# via workflow_dispatch.
 # ---------------------------------------------------------------------
 
 name: dreamos-buildsystem-ubnt18
@@ -21,14 +29,15 @@ on:
   workflow_dispatch:
 
 env:
-  BASE:    ghcr.io/wxbet-org/dreamos-buildsystem-base:latest
-  SOURCES: ghcr.io/wxbet-org/dreamos-buildsystem-sources:latest
-  IMAGE:   ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
-  IMAGE_DIR: dreamos-buildsystem-ubnt18
-  TAG_PREFIX: dreamos-buildsystem-ubnt18/
+  BASE_IMAGE:    ghcr.io/wxbet-org/dreamos-buildsystem-base
+  SOURCES_IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-sources
+  UBNT18_IMAGE:  ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
+  BASE_DIR:      dreamos-buildsystem-base
+  UBNT18_DIR:    dreamos-buildsystem-ubnt18
+  TAG_PREFIX:    dreamos-buildsystem-ubnt18/
 
 jobs:
-  compose:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,15 +48,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - name: Install regctl
-        uses: regclient/actions/regctl-installer@main
-
-      - name: Log in to ghcr.io
-        run: |
-          regctl registry login ghcr.io \
-              -u "$GITHUB_ACTOR" \
-              -p "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Determine version and :latest eligibility
         id: tags
@@ -64,20 +64,94 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
               echo "is_highest=1" >> "$GITHUB_OUTPUT"
+              echo "Version ${VERSION} is the highest; :latest will be updated on both images."
           else
               echo "is_highest=0" >> "$GITHUB_OUTPUT"
+              echo "Version ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}); :latest untouched."
           fi
+
+      # ================== PHASE 1: build + push base image ==================
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write pro-attach-config.yaml from secret
+        run: |
+          if [ -z "${{ secrets.UBUNTU_PRO_TOKEN }}" ]; then
+            echo "::error::Secret UBUNTU_PRO_TOKEN is not set."
+            exit 1
+          fi
+          cat > "${BASE_DIR}/pro-attach-config.yaml" <<EOF
+          token: ${{ secrets.UBUNTU_PRO_TOKEN }}
+          enable_services:
+            - esm-infra
+            - esm-apps
+          EOF
+          chmod 0600 "${BASE_DIR}/pro-attach-config.yaml"
+
+      - name: Compute base tag list
+        id: base_tags
+        run: |
+          V="${{ steps.tags.outputs.version }}"
+          if [ "$V" = "latest" ]; then
+              TAG_LIST="${BASE_IMAGE}:latest"
+          elif [ "${{ steps.tags.outputs.is_highest }}" = "1" ]; then
+              TAG_LIST="${BASE_IMAGE}:${V},${BASE_IMAGE}:latest"
+          else
+              TAG_LIST="${BASE_IMAGE}:${V}"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push base image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ env.BASE_DIR }}
+          push: true
+          tags: ${{ steps.base_tags.outputs.tag_list }}
+          build-args: |
+            IMAGE_COMMIT=${{ github.sha }}
+          secret-files: |
+            pro-attach-config=./${{ env.BASE_DIR }}/pro-attach-config.yaml
+          # no-cache: every release should re-run apt-get upgrade so
+          # ESM patches actually land in the new image.
+          no-cache: true
+
+      - name: Wipe local pro-attach-config.yaml
+        if: always()
+        run: rm -f "${BASE_DIR}/pro-attach-config.yaml"
+
+      # ================== PHASE 2: compose + push ubnt18 image ==================
+
+      - name: Install regctl
+        uses: regclient/actions/regctl-installer@main
+
+      - name: regctl login to ghcr
+        run: |
+          regctl registry login ghcr.io \
+              -u "$GITHUB_ACTOR" \
+              -p "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Compose ubnt18:${{ steps.tags.outputs.version }}
         env:
-          DST: ${{ env.IMAGE }}:${{ steps.tags.outputs.version }}
+          BASE:    ${{ env.BASE_IMAGE }}:${{ steps.tags.outputs.version }}
+          SOURCES: ${{ env.SOURCES_IMAGE }}:latest
+          DST:     ${{ env.UBNT18_IMAGE }}:${{ steps.tags.outputs.version }}
         run: |
-          chmod +x "${IMAGE_DIR}/compose.sh"
-          "${IMAGE_DIR}/compose.sh"
+          chmod +x "${UBNT18_DIR}/compose.sh"
+          "${UBNT18_DIR}/compose.sh"
 
-      - name: Also push :latest (if this version is the highest)
+      - name: Also push ubnt18:latest (if this version is the highest)
         if: steps.tags.outputs.is_highest == '1' && steps.tags.outputs.version != 'latest'
         env:
-          DST: ${{ env.IMAGE }}:latest
+          BASE:    ${{ env.BASE_IMAGE }}:${{ steps.tags.outputs.version }}
+          SOURCES: ${{ env.SOURCES_IMAGE }}:latest
+          DST:     ${{ env.UBNT18_IMAGE }}:latest
         run: |
-          "${IMAGE_DIR}/compose.sh"
+          "${UBNT18_DIR}/compose.sh"
