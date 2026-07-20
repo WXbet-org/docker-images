@@ -34,11 +34,19 @@ jobs:
         with:
           account: wxbet-org
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: 'dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources'
-          # tag-selection=untagged means only consider versions with no tag.
-          # keep-n-most-recent=5 leaves a safety buffer so a manifest list's
-          # child manifests from the current tag never get eaten.
-          # cut-off protects anything published in the last hour.
+          image-names: 'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources'
+          # tag-selection=untagged: only consider untagged versions.
+          # image-tags='!*': never touch anything with any tag.
+          # keep-n-most-recent=5: layered safety -- keep the 5 newest
+          #   untagged in each package no matter what. Buildx pushes
+          #   tagged images as OCI index manifests that reference
+          #   platform + attestation child manifests as untagged; those
+          #   children must survive or the tagged image breaks.
+          # cut-off=1h: extra guard against racing with a fresh release.
+          #   If a release just pushed and cleanup runs seconds later,
+          #   the just-published untagged children are all <1h old and
+          #   stay protected. Cron runs Sunday 03:00 UTC so this only
+          #   matters for manual dispatches close to a tag push.
           image-tags: '!*'
           tag-selection: untagged
           keep-n-most-recent: 5
