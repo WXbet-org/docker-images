@@ -27,16 +27,11 @@
 
 name: dreamos-buildsystem-ubnt18
 
-# NOTE: currently DISABLED because the image bundles ~11 GB of OE sources
-# and doesn't fit into GHA runner disk (14 GB free). The image is built
-# and used locally on the Hetzner build server for now. To re-enable when
-# we split into a slim base image + separate sources image, restore the
-# tag trigger below.
 on:
-  workflow_dispatch:  # manual trigger from the Actions tab only
-  # push:
-  #   tags:
-  #     - 'dreamos-buildsystem-ubnt18/*'
+  push:
+    tags:
+      - 'dreamos-buildsystem-ubnt18/*'
+  workflow_dispatch:  # also allow manual triggering from the Actions tab
 
 env:
   IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
@@ -52,6 +47,21 @@ jobs:
       packages: write
 
     steps:
+      - name: Free up disk space on the runner
+        # ubuntu-latest starts with ~14 GB free on /. The sources image
+        # alone unpacks to ~19 GB. This action removes preinstalled tools
+        # we don't need (dotnet, android SDK, haskell, big caches) and
+        # brings free space up to ~50 GB.
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false   # slow, and we don't need it
+          docker-images: false    # keep whatever we might already have
+          swap-storage: true
+
       - name: Checkout (full history for tag sort)
         uses: actions/checkout@v4
         with:
@@ -113,6 +123,7 @@ jobs:
           tags: ${{ steps.tags.outputs.tag_list }}
           build-args: |
             IMAGE_COMMIT=${{ github.sha }}
+            SOURCES_IMAGE=ghcr.io/wxbet-org/dreamos-buildsystem-sources:latest
           secret-files: |
             pro-attach-config=./${{ env.IMAGE_DIR }}/pro-attach-config.yaml
           # no-cache is deliberate: tag pushes are rare and we want the
