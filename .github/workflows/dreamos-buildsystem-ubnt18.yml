@@ -138,21 +138,19 @@ jobs:
         if: always()
         run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"
 
-      - name: Prune untagged ghcr versions
+      - name: Prune old untagged ghcr versions
         # Every push that moves a tag to a new digest leaves the previous
-        # digest untagged; GitHub does not garbage-collect them automatically.
-        run: |
-          echo "Cleaning up untagged GHCR versions..."
-          versions=$(curl -sSf \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/orgs/wxbet-org/packages/container/dreamos-buildsystem-ubnt18/versions?per_page=100" \
-            | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id' || true)
-          for id in $versions; do
-            echo "  deleting untagged version $id"
-            curl -sSf -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/orgs/wxbet-org/packages/container/dreamos-buildsystem-ubnt18/versions/$id" || \
-              echo "  (skip: could not delete $id)"
-          done
+        # main manifest UNTAGGED, and each push also produces attestation
+        # child manifests that are inherently untagged (referenced only by
+        # digest from the manifest list of the current tag).
+        #
+        # min-versions-to-keep is deliberately generous so the CURRENT
+        # push's attestation manifests are never touched. Older untagged
+        # versions from previous pushes are the ones we actually want gone.
+        uses: actions/delete-package-versions@v5
+        with:
+          owner: wxbet-org
+          package-name: dreamos-buildsystem-ubnt18
+          package-type: container
+          delete-only-untagged-versions: true
+          min-versions-to-keep: 5
