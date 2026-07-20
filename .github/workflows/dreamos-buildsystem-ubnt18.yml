@@ -154,6 +154,12 @@ jobs:
         if: always()
         run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"
 
+      # Both cleanup steps use continue-on-error because
+      # actions/delete-package-versions dies with "Package not found"
+      # when deleting an attestation manifest cascades and removes
+      # child manifests it was going to delete next. Partial cleanup
+      # is fine -- the next workflow run picks up whatever's left.
+
       - name: Prune old untagged ghcr versions (this image)
         # Every push that moves a tag to a new digest leaves the previous
         # main manifest UNTAGGED, and each push also produces attestation
@@ -164,6 +170,7 @@ jobs:
         # push's attestation manifests are never touched. Older untagged
         # versions from previous pushes are the ones we actually want gone.
         uses: actions/delete-package-versions@v5
+        continue-on-error: true
         with:
           owner: wxbet-org
           package-name: dreamos-buildsystem-ubnt18
@@ -177,6 +184,7 @@ jobs:
         # don't accumulate over time. Same logic: keep the newest few
         # (current tag's children stay safe), drop older stragglers.
         uses: actions/delete-package-versions@v5
+        continue-on-error: true
         with:
           owner: wxbet-org
           package-name: dreamos-buildsystem-sources
