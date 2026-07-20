@@ -110,8 +110,8 @@ Other useful Make targets:
 For manual bitbake invocation of a single recipe:
 
 ```sh
-source bitbake.env
 cd build/dm900
+source bitbake.env
 bitbake enigma2   # or any other recipe
 ```
 
