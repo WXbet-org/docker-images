@@ -138,7 +138,7 @@ jobs:
         if: always()
         run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"
 
-      - name: Prune old untagged ghcr versions
+      - name: Prune old untagged ghcr versions (this image)
         # Every push that moves a tag to a new digest leaves the previous
         # main manifest UNTAGGED, and each push also produces attestation
         # child manifests that are inherently untagged (referenced only by
@@ -151,6 +151,19 @@ jobs:
         with:
           owner: wxbet-org
           package-name: dreamos-buildsystem-ubnt18
+          package-type: container
+          delete-only-untagged-versions: true
+          min-versions-to-keep: 5
+
+      - name: Prune old untagged ghcr versions (sources image)
+        # Sources is rebuilt+pushed manually (not via CI). Piggyback its
+        # cleanup here so untagged remnants from repeated manual pushes
+        # don't accumulate over time. Same logic: keep the newest few
+        # (current tag's children stay safe), drop older stragglers.
+        uses: actions/delete-package-versions@v5
+        with:
+          owner: wxbet-org
+          package-name: dreamos-buildsystem-sources
           package-type: container
           delete-only-untagged-versions: true
           min-versions-to-keep: 5
