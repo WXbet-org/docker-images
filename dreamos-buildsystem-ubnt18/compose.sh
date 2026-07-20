@@ -35,13 +35,13 @@ trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 
 echo ">>> Resolving base image ($BASE) for $PLATFORM ..."
-regctl manifest get --platform "$PLATFORM" --format '{{ .RawBody }}' "$BASE"    > base.mf.json
+regctl manifest get --platform "$PLATFORM" --format body "$BASE"    > base.mf.json
 BASE_CFG_DIGEST=$(jq -r '.config.digest' base.mf.json)
 regctl blob get "$BASE" "$BASE_CFG_DIGEST" > base.cfg.json
 BASE_MEDIATYPE=$(jq -r '.mediaType' base.mf.json)
 
 echo ">>> Resolving sources image ($SOURCES) for $PLATFORM ..."
-regctl manifest get --platform "$PLATFORM" --format '{{ .RawBody }}' "$SOURCES" > src.mf.json
+regctl manifest get --platform "$PLATFORM" --format body "$SOURCES" > src.mf.json
 SRC_CFG_DIGEST=$(jq -r '.config.digest' src.mf.json)
 regctl blob get "$SOURCES" "$SRC_CFG_DIGEST" > src.cfg.json
 
