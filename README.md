@@ -31,6 +31,12 @@ Roughly 13 GB on disk — the bulk is a baked-in OE downloads snapshot at `/opt/
 
 ### 3. Start it
 
+Two patterns depending on how long-lived your session is.
+
+#### 3a. Quick interactive session (`--rm -it`)
+
+Good for a first look or a short test. The container is torn down on exit.
+
 ```sh
 mkdir -p ~/dreamos-builds
 
@@ -40,10 +46,45 @@ docker run --rm -it \
     ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:latest
 ```
 
-- `-v ~/dreamos-builds:/home/builder` mounts a host folder as the builder user's home so BuildEnv checkouts and downloaded sources persist across container runs
-- `-p 2222:22` publishes the container's sshd; log in with `ssh builder@localhost -p 2222` (password: `builder`)
+You land directly in a bash prompt as the `builder` user.
+
+#### 3b. Long-running container (recommended for real builds)
+
+Detach the container so bitbake keeps running when you close the terminal, and attach a shell whenever you need one:
+
+```sh
+mkdir -p ~/dreamos-builds
+
+# Start detached and named -- `sleep infinity` keeps it alive since
+# bash without a TTY would exit immediately in detached mode
+docker run -d --name dreambox \
+    -p 2222:22 \
+    -v ~/dreamos-builds:/home/builder \
+    ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:latest \
+    sleep infinity
+
+# Open a shell inside it
+docker exec -it dreambox bash
+
+# Open a second shell in another terminal (as many as you want)
+docker exec -it dreambox bash
+
+# When done -- stop and remove
+docker stop dreambox && docker rm dreambox
+```
+
+`docker exec` shells survive Ctrl+D — the container keeps running until you `docker stop` it.
+
+#### Flags explained
+
+- `-v ~/dreamos-builds:/home/builder` bind-mounts a host folder as the `builder` user's home. Everything the builder does (BuildEnv checkouts, downloaded sources, GPG keyring, `.bash_history`, …) persists across container restarts.
+- `-p 2222:22` publishes the container's sshd on host port 2222. Login from anywhere on the host with `ssh builder@localhost -p 2222` (password: `builder`).
+
+#### First-start auto-bootstrap
 
 On the **very first container start** with an empty `~/dreamos-builds`, the entrypoint auto-clones the four standard BuildEnv variants (`opendreambox/{krogoth,pyro}` and `dreamlegacy/{krogoth,pyro}`) into that folder. Takes several minutes. A marker file `~/dreamos-builds/.auto-bootstrap-done` prevents re-runs. Skip it entirely with `-e AUTO_BOOTSTRAP=0`.
+
+### 4. Build
 
 Inside the container, run a build the standard opendreambox way:
 
