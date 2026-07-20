@@ -34,6 +34,14 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 
+echo ">>> Priming target repo with base image (cross-repo blob mount, no download) ..."
+# This copies the base image tag into the target repo. Since both live on
+# the same registry (ghcr), all base layer blobs get cross-repo-mounted
+# server-side -- no bytes leave the registry. The manifest at $DST is
+# temporary; we overwrite it later with our composed one. But its blob
+# references make the base layers valid targets for our composed manifest.
+regctl image copy --fast "$BASE" "$DST"
+
 echo ">>> Resolving base image ($BASE) for $PLATFORM ..."
 regctl manifest get --platform "$PLATFORM" --format body "$BASE"    > base.mf.json
 BASE_CFG_DIGEST=$(jq -r '.config.digest' base.mf.json)
