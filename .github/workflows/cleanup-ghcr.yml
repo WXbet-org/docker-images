@@ -1,0 +1,46 @@
+# ---------------------------------------------------------------------
+# cleanup-ghcr
+#
+# Prunes truly orphaned untagged container versions from the two GHCR
+# packages this repo publishes. Runs weekly on Sunday night and can be
+# triggered manually.
+#
+# Uses snok/container-retention-policy which is manifest-list aware:
+# it walks each tagged manifest's children and refuses to delete
+# anything still referenced -- unlike naive "delete all untagged"
+# tools which either silently no-op or corrupt tagged images.
+#
+# Requires GITHUB_TOKEN with `packages: write` (repo-level). The
+# packages themselves need each repo in their "Manage Actions access"
+# with the Write role (Settings on each package page).
+# ---------------------------------------------------------------------
+
+name: cleanup-ghcr
+
+on:
+  workflow_dispatch:      # manual trigger from the Actions tab
+  schedule:
+    - cron: '0 3 * * 0'   # every Sunday 03:00 UTC
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete orphaned untagged versions
+        uses: snok/container-retention-policy@v3
+        with:
+          account: wxbet-org
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: 'dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources'
+          # tag-selection=untagged means only consider versions with no tag.
+          # keep-n-most-recent=5 leaves a safety buffer so a manifest list's
+          # child manifests from the current tag never get eaten.
+          # cut-off protects anything published in the last hour.
+          image-tags: '!*'
+          tag-selection: untagged
+          keep-n-most-recent: 5
+          cut-off: 1h
+          dry-run: false

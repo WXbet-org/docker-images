@@ -154,40 +154,9 @@ jobs:
         if: always()
         run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"
 
-      # Both cleanup steps use continue-on-error because
-      # actions/delete-package-versions dies with "Package not found"
-      # when deleting an attestation manifest cascades and removes
-      # child manifests it was going to delete next. Partial cleanup
-      # is fine -- the next workflow run picks up whatever's left.
-
-      - name: Prune old untagged ghcr versions (this image)
-        # Every push that moves a tag to a new digest leaves the previous
-        # main manifest UNTAGGED, and each push also produces attestation
-        # child manifests that are inherently untagged (referenced only by
-        # digest from the manifest list of the current tag).
-        #
-        # min-versions-to-keep is deliberately generous so the CURRENT
-        # push's attestation manifests are never touched. Older untagged
-        # versions from previous pushes are the ones we actually want gone.
-        uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          owner: wxbet-org
-          package-name: dreamos-buildsystem-ubnt18
-          package-type: container
-          delete-only-untagged-versions: true
-          min-versions-to-keep: 5
-
-      - name: Prune old untagged ghcr versions (sources image)
-        # Sources is rebuilt+pushed manually (not via CI). Piggyback its
-        # cleanup here so untagged remnants from repeated manual pushes
-        # don't accumulate over time. Same logic: keep the newest few
-        # (current tag's children stay safe), drop older stragglers.
-        uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          owner: wxbet-org
-          package-name: dreamos-buildsystem-sources
-          package-type: container
-          delete-only-untagged-versions: true
-          min-versions-to-keep: 5
+      # Note: no cleanup step here on purpose. Container packages on GHCR
+      # are manifest lists that reference "untagged" child manifests --
+      # naive "delete untagged" tools don't understand that structure and
+      # end up either silently no-op'ing or partially breaking things.
+      # Cleanup is handled by the separate cleanup-ghcr workflow which
+      # uses snok/container-retention-policy (manifest-list aware).
