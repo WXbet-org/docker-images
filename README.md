@@ -86,14 +86,43 @@ On the **very first container start** with an empty `~/dreamos-builds`, the entr
 
 ### 4. Build
 
-Inside the container, run a build the standard opendreambox way:
+Each BuildEnv uses a Makefile as its top-level entry point. `make help` inside one of them lists every option; the common flow:
 
 ```sh
-cd ~/opendreambox/krogoth
-MACHINE=dm900 make init
+cd ~/opendreambox/krogoth   # or ~/opendreambox/pyro, ~/dreamlegacy/{krogoth,pyro}
+
+# Optional pre-fetch of all sources for the target -- shakes out
+# network / mirror issues before the long build starts
 MACHINE=dm900 make download
-# ...then bitbake your target image
+
+# Build the firmware image (default target: dreambox-image)
+MACHINE=dm900 make image
 ```
+
+Other useful Make targets:
+
+- `make image MACHINE=…` — full firmware image
+- `make console-image MACHINE=…` — minimal console-only variant
+- `make rescue-image MACHINE=…` — recovery image
+- `make update` — refresh the SDK (submodules) after upstream changes
+- `make help` — the authoritative list, plus your current settings
+
+For manual bitbake invocation of a single recipe:
+
+```sh
+source bitbake.env
+cd build/dm900
+bitbake enigma2   # or any other recipe
+```
+
+**Machine matrix** (which BuildEnv branch supports which target):
+
+| | krogoth | pyro |
+|---|:---:|:---:|
+| `dm520`, `dm7080`, `dm820`, `dm900`, `dm920` | ✅ | — |
+| `dreamone`, `dreamtwo` | — | ✅ |
+
+Set `MACHINE` per-invocation via `MACHINE=… make …` or persist it inside a BuildEnv with `echo MACHINE=dm900 >> conf/make.conf`.
 
 Deep-dive documentation (Dockerfile internals, PREMIRRORS setup, GPG package signing, the two-image split): [`dreamos-buildsystem-ubnt18/README.md`](dreamos-buildsystem-ubnt18/README.md).
 
