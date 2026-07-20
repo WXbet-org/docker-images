@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete orphaned untagged versions
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v3.1.0
         with:
           account: wxbet-org
           token: ${{ secrets.GITHUB_TOKEN }}
