@@ -1,0 +1,147 @@
+# ---------------------------------------------------------------------
+# dreamos-buildsystem-ubnt18
+#
+# Multi-image repo convention: one workflow file per image, each
+# triggered only by git tags PREFIXED with the image name.
+#
+# Tag scheme:   dreamos-buildsystem-ubnt18/<version>
+# Examples:     dreamos-buildsystem-ubnt18/v0.1.0
+#               dreamos-buildsystem-ubnt18/v1.2.3-rc1
+#
+# Each tag becomes two image tags on ghcr:
+#   :<version>   - exact release (e.g. v0.1.0), immutable
+#   :latest      - moving alias, only updated when <version> is the
+#                  highest sortable version among tags of THIS image
+#                  (git tag -l 'dreamos-buildsystem-ubnt18/*' | sort -V).
+#                  Tags for other images in the repo are ignored.
+#
+# Auth to ghcr.io uses the built-in GITHUB_TOKEN with `packages: write`.
+# Works out-of-the-box because the repo lives under WXbet-org, the same
+# org the packages are published to. No PAT needed for build/push.
+#
+# The Ubuntu Pro token is provided via the repo secret UBUNTU_PRO_TOKEN
+# (Settings -> Secrets and variables -> Actions). The workflow writes it
+# into pro-attach-config.yaml at runtime; the file is passed to the
+# build as a BuildKit secret and never lands in an image layer.
+# ---------------------------------------------------------------------
+
+name: dreamos-buildsystem-ubnt18
+
+# NOTE: currently DISABLED because the image bundles ~11 GB of OE sources
+# and doesn't fit into GHA runner disk (14 GB free). The image is built
+# and used locally on the Hetzner build server for now. To re-enable when
+# we split into a slim base image + separate sources image, restore the
+# tag trigger below.
+on:
+  workflow_dispatch:  # manual trigger from the Actions tab only
+  # push:
+  #   tags:
+  #     - 'dreamos-buildsystem-ubnt18/*'
+
+env:
+  IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
+  IMAGE_DIR: dreamos-buildsystem-ubnt18
+  TAG_PREFIX: dreamos-buildsystem-ubnt18/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout (full history for tag sort)
+        uses: actions/checkout@v4
+        with:
+          # Full history so `git tag -l | sort -V` sees every tag, not
+          # just the tip. Default fetch-depth: 1 would hide older tags.
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write pro-attach-config.yaml from secret
+        run: |
+          if [ -z "${{ secrets.UBUNTU_PRO_TOKEN }}" ]; then
+            echo "::error::Secret UBUNTU_PRO_TOKEN is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          cat > "${IMAGE_DIR}/pro-attach-config.yaml" <<EOF
+          token: ${{ secrets.UBUNTU_PRO_TOKEN }}
+          enable_services:
+            - esm-infra
+            - esm-apps
+          EOF
+          chmod 0600 "${IMAGE_DIR}/pro-attach-config.yaml"
+
+      - name: Determine version and :latest eligibility
+        id: tags
+        run: |
+          # Strip the "image-name/" prefix from the git tag to get the
+          # docker tag. E.g. "dreamos-buildsystem-ubnt18/v0.1.0" -> "v0.1.0".
+          VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Find the highest tag for THIS image only (not other images
+          # in the same repo).
+          HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
+          HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
+
+          TAG_LIST="${IMAGE}:${VERSION}"
+          if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
+            echo "Version ${VERSION} is the highest for this image - will also push :latest"
+            TAG_LIST="${TAG_LIST},${IMAGE}:latest"
+          else
+            echo "Version ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}) - skipping :latest"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ env.IMAGE_DIR }}
+          push: true
+          tags: ${{ steps.tags.outputs.tag_list }}
+          build-args: |
+            IMAGE_COMMIT=${{ github.sha }}
+          secret-files: |
+            pro-attach-config=./${{ env.IMAGE_DIR }}/pro-attach-config.yaml
+          # no-cache is deliberate: tag pushes are rare and we want the
+          # big RUN block (apt-get update + pro attach + apt-get upgrade
+          # + apt-get install) to actually re-run so ESM patches released
+          # since the previous tag land in the new image. Otherwise
+          # BuildKit would happily reuse the cached layer forever, since
+          # nothing about the RUN instruction itself changed.
+          no-cache: true
+
+      - name: Wipe local pro-attach-config.yaml
+        if: always()
+        run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"
+
+      - name: Prune untagged ghcr versions
+        # Every push that moves a tag to a new digest leaves the previous
+        # digest untagged; GitHub does not garbage-collect them automatically.
+        run: |
+          echo "Cleaning up untagged GHCR versions..."
+          versions=$(curl -sSf \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/wxbet-org/packages/container/dreamos-buildsystem-ubnt18/versions?per_page=100" \
+            | jq -r '.[] | select(.metadata.container.tags | length == 0) | .id' || true)
+          for id in $versions; do
+            echo "  deleting untagged version $id"
+            curl -sSf -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/orgs/wxbet-org/packages/container/dreamos-buildsystem-ubnt18/versions/$id" || \
+              echo "  (skip: could not delete $id)"
+          done

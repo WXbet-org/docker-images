@@ -1,0 +1,12 @@
+# Template for the Ubuntu Pro attach config.
+#
+# 1. Copy this file to `pro-attach-config.yaml`.
+# 2. Replace YOUR_TOKEN_HERE with your token from https://ubuntu.com/pro/dashboard.
+# 3. The real file is excluded from commits via .gitignore -- NEVER push it.
+#
+# It is mounted as a BuildKit secret during the build and does not end up in the image.
+
+token: YOUR_TOKEN_HERE
+enable_services:
+  - esm-infra
+  - esm-apps

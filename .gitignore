@@ -1,0 +1,10 @@
+# Ubuntu Pro token -- NEVER commit!
+pro-attach-config.yaml
+
+# Baked-in OE sources seed (~11 GB) -- kept out of git, populated per-server
+# via rsync from the legacy builder. See dreamos-buildsystem-ubnt18/README.md.
+sources-seed/
+
+# Local overrides
+*.local
+.env
