@@ -126,50 +126,77 @@ Set `MACHINE` per-invocation via `MACHINE=… make …` or persist it inside a B
 
 Deep-dive documentation (Dockerfile internals, PREMIRRORS setup, GPG package signing, the two-image split): [`dreamos-buildsystem-ubnt18/README.md`](dreamos-buildsystem-ubnt18/README.md).
 
-## Layout
+## Architecture — three images, composed on the registry
 
-One folder per image with its Dockerfile, build scripts, and README. One GitHub Actions workflow per image, triggered by git tags prefixed with the image name.
+To keep CI fast without dragging the 11 GB sources snapshot into every rebuild, the consumable `dreamos-buildsystem-ubnt18` image is composed at the OCI manifest level from two smaller source images. No consumer needs to know this — a single `docker pull ubnt18:latest` still gets everything.
+
+```
+dreamos-buildsystem-base            dreamos-buildsystem-sources
+   (ubuntu + toolchain,             (ubuntu + /opt/dl-mirror,
+    ~2 GB, CI-built)                 ~11 GB, built manually on build server)
+             \                              /
+              \                            /
+               \_________ regctl _________/
+                        composes on ghcr
+                        (server-side layer mount,
+                         no blob download to runner)
+                              │
+                              ▼
+              dreamos-buildsystem-ubnt18
+              (~13 GB, what consumers pull)
+```
+
+**Why this split:**
+
+- **base** — rebuilds on every code/toolchain/ESM-patch change. Small, fast CI (~5 min).
+- **sources** — rebuilds only when the OE downloads snapshot needs refreshing (rare, manual on the build server).
+- **ubnt18** — composed on ghcr from base + sources via `regctl` and OCI cross-repo blob mount. **No layer blobs are downloaded during composition** — the ubnt18 manifest is crafted from the existing base+sources manifests and pushed. Runtime: ~30 seconds on a stock GHA runner.
+
+## Layout
 
 ```
 .
-├── dreamos-buildsystem-sources/      Data image: ~11 GB OE downloads snapshot at /opt/dl-mirror
-│   ├── Dockerfile
+├── dreamos-buildsystem-base/          Toolchain-only image (~2 GB, CI-built)
+│   ├── Dockerfile                     FROM ubuntu:18.04 + apt install / pro attach / entrypoint
 │   ├── build.sh
-│   └── README.md
-├── dreamos-buildsystem-ubnt18/       Ubuntu 18.04 + Pro/ESM toolchain -- FROM dreamos-buildsystem-sources
-│   ├── Dockerfile
-│   ├── build.sh / run.sh
-│   ├── bootstrap-buildenv.sh
 │   ├── entrypoint.sh
+│   ├── bootstrap-buildenv.sh
 │   ├── pro-attach-config.yaml.example
 │   └── README.md
+├── dreamos-buildsystem-sources/       Data image (~11 GB, built manually)
+│   ├── Dockerfile                     FROM ubuntu:18.04 + COPY sources-seed /opt/dl-mirror
+│   ├── build.sh
+│   └── README.md
+├── dreamos-buildsystem-ubnt18/        Composed consumable -- no Dockerfile!
+│   ├── compose.sh                     regctl-based manifest composition
+│   ├── run.sh                         consumer helper
+│   └── README.md
 └── .github/workflows/
-    └── dreamos-buildsystem-ubnt18.yml
+    ├── dreamos-buildsystem-base.yml   Builds base on tag push
+    └── dreamos-buildsystem-ubnt18.yml Composes ubnt18 on tag push
 ```
 
 ## Images
 
-| Image | Purpose | Details |
-|-------|---------|---------|
-| [`dreamos-buildsystem-sources`](dreamos-buildsystem-sources/README.md) | Data-only image with the ~11 GB OE sources snapshot at `/opt/dl-mirror`. Serves as base for the toolchain image so the layer is deduped in the registry. | [README](dreamos-buildsystem-sources/README.md) |
-| [`dreamos-buildsystem-ubnt18`](dreamos-buildsystem-ubnt18/README.md) | Ubuntu 18.04 + gcc-6.5 + Python 2.7/3.6 for opendreambox. Extends the sources image with the build toolchain. | [README](dreamos-buildsystem-ubnt18/README.md) |
+| Image | Purpose | How it's built |
+|-------|---------|----------------|
+| [`dreamos-buildsystem-base`](dreamos-buildsystem-base/README.md) | Toolchain only (~2 GB) | CI on `dreamos-buildsystem-base/vX.Y.Z` tag push |
+| [`dreamos-buildsystem-sources`](dreamos-buildsystem-sources/README.md) | ~11 GB OE sources snapshot at `/opt/dl-mirror` | Manually on the build server (`./build.sh` in that folder) |
+| [`dreamos-buildsystem-ubnt18`](dreamos-buildsystem-ubnt18/README.md) | Composed (~13 GB) — consumer-facing | CI on `dreamos-buildsystem-ubnt18/vX.Y.Z` tag push (composes base + sources on ghcr) |
 
 ## Release convention
 
-Git tags are prefixed with the image name so each image can be versioned and released independently:
+Git tags are prefixed with the image name:
 
 ```
-<image-name>/<version>
-
-Examples:
-  dreamos-buildsystem-ubnt18/v0.1.0
-  dreamos-buildsystem-ubnt18/v1.2.3-rc1
+dreamos-buildsystem-base/v0.3.0        → publishes ghcr .../dreamos-buildsystem-base:v0.3.0
+dreamos-buildsystem-ubnt18/v0.3.0      → composes and publishes ghcr .../dreamos-buildsystem-ubnt18:v0.3.0
 ```
 
-Pushing such a tag triggers exactly the matching workflow and publishes to `ghcr.io/wxbet-org/<image-name>:<version>` (and `:latest` if the version is the highest sortable one for that image).
+Sources is manually versioned (or just `:latest` — its release cadence is different).
 
-## Adding a new image
+Typical release flow:
 
-1. Create a new `<image-name>/` folder with a `Dockerfile` and `README.md`.
-2. Add a new workflow `.github/workflows/<image-name>.yml` based on [`dreamos-buildsystem-ubnt18.yml`](.github/workflows/dreamos-buildsystem-ubnt18.yml) — mainly adjust `IMAGE`, `IMAGE_DIR`, `TAG_PREFIX`, and the trigger.
-3. On first push, set the package visibility under WXbet-org to public if desired.
+1. Push `dreamos-buildsystem-base/vX.Y.Z` → CI builds and pushes the base image
+2. Push `dreamos-buildsystem-ubnt18/vX.Y.Z` → CI composes ubnt18 = latest base + latest sources, pushes to ghcr
+3. `:latest` is auto-updated to the highest sortable version

@@ -1,28 +1,15 @@
 # ---------------------------------------------------------------------
-# dreamos-buildsystem-ubnt18
+# dreamos-buildsystem-ubnt18 (composed)
 #
-# Multi-image repo convention: one workflow file per image, each
-# triggered only by git tags PREFIXED with the image name.
+# Composes the consumable ubnt18 image on the registry from:
+#   * dreamos-buildsystem-base:latest      (toolchain, built by base workflow)
+#   * dreamos-buildsystem-sources:latest   (data snapshot, built manually)
 #
-# Tag scheme:   dreamos-buildsystem-ubnt18/<version>
-# Examples:     dreamos-buildsystem-ubnt18/v0.1.0
-#               dreamos-buildsystem-ubnt18/v1.2.3-rc1
+# Uses regctl and OCI cross-repo blob mount -- no layer blobs are
+# downloaded to the runner. Runtime: ~30 seconds. See the compose.sh
+# script in this image folder for the actual mechanics.
 #
-# Each tag becomes two image tags on ghcr:
-#   :<version>   - exact release (e.g. v0.1.0), immutable
-#   :latest      - moving alias, only updated when <version> is the
-#                  highest sortable version among tags of THIS image
-#                  (git tag -l 'dreamos-buildsystem-ubnt18/*' | sort -V).
-#                  Tags for other images in the repo are ignored.
-#
-# Auth to ghcr.io uses the built-in GITHUB_TOKEN with `packages: write`.
-# Works out-of-the-box because the repo lives under WXbet-org, the same
-# org the packages are published to. No PAT needed for build/push.
-#
-# The Ubuntu Pro token is provided via the repo secret UBUNTU_PRO_TOKEN
-# (Settings -> Secrets and variables -> Actions). The workflow writes it
-# into pro-attach-config.yaml at runtime; the file is passed to the
-# build as a BuildKit secret and never lands in an image layer.
+# Tag scheme: dreamos-buildsystem-ubnt18/<version>
 # ---------------------------------------------------------------------
 
 name: dreamos-buildsystem-ubnt18
@@ -31,132 +18,66 @@ on:
   push:
     tags:
       - 'dreamos-buildsystem-ubnt18/*'
-  workflow_dispatch:  # also allow manual triggering from the Actions tab
+  workflow_dispatch:
 
 env:
-  IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
+  BASE:    ghcr.io/wxbet-org/dreamos-buildsystem-base:latest
+  SOURCES: ghcr.io/wxbet-org/dreamos-buildsystem-sources:latest
+  IMAGE:   ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
   IMAGE_DIR: dreamos-buildsystem-ubnt18
   TAG_PREFIX: dreamos-buildsystem-ubnt18/
 
 jobs:
-  build:
+  compose:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Free up disk space on the runner
-        # ubuntu-latest starts with ~14 GB free on /. The sources image
-        # alone unpacks to ~19 GB. This action removes preinstalled tools
-        # we don't need (dotnet, android SDK, haskell, big caches) and
-        # brings free space up to ~50 GB.
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false   # slow, and we don't need it
-          docker-images: false    # keep whatever we might already have
-          swap-storage: true
-
       - name: Checkout (full history for tag sort)
         uses: actions/checkout@v5
         with:
-          # Full history so `git tag -l | sort -V` sees every tag, not
-          # just the tip. Default fetch-depth: 1 would hide older tags.
           fetch-depth: 0
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Install regctl
+        uses: regclient/actions/regctl-installer@main
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Write pro-attach-config.yaml from secret
         run: |
-          if [ -z "${{ secrets.UBUNTU_PRO_TOKEN }}" ]; then
-            echo "::error::Secret UBUNTU_PRO_TOKEN is not set. Add it under Settings -> Secrets and variables -> Actions."
-            exit 1
-          fi
-          cat > "${IMAGE_DIR}/pro-attach-config.yaml" <<EOF
-          token: ${{ secrets.UBUNTU_PRO_TOKEN }}
-          enable_services:
-            - esm-infra
-            - esm-apps
-          EOF
-          chmod 0600 "${IMAGE_DIR}/pro-attach-config.yaml"
+          regctl registry login ghcr.io \
+              -u "$GITHUB_ACTOR" \
+              -p "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Determine version and :latest eligibility
         id: tags
         run: |
-          # Strip the "image-name/" prefix from the git tag to get the
-          # docker tag. E.g. "dreamos-buildsystem-ubnt18/v0.1.0" -> "v0.1.0".
-          VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-          # Find the highest tag for THIS image only (not other images
-          # in the same repo).
-          HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
-          HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
-
-          TAG_LIST="${IMAGE}:${VERSION}"
-          if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
-            echo "Version ${VERSION} is the highest for this image - will also push :latest"
-            TAG_LIST="${TAG_LIST},${IMAGE}:latest"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
+              HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
+              HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
           else
-            echo "Version ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}) - skipping :latest"
+              # workflow_dispatch: no tag context, just move :latest
+              VERSION="latest"
+              HIGHEST_VERSION="latest"
           fi
-          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
+              echo "is_highest=1" >> "$GITHUB_OUTPUT"
+          else
+              echo "is_highest=0" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Pre-pull sources base image (retry vs transient ghcr 429)
-        # docker/build-push-action doesn't retry on rate-limit responses;
-        # do the pull ourselves with a short backoff loop so a hiccup
-        # from ghcr doesn't fail the whole run.
+      - name: Compose ubnt18:${{ steps.tags.outputs.version }}
+        env:
+          DST: ${{ env.IMAGE }}:${{ steps.tags.outputs.version }}
         run: |
-          for i in 1 2 3 4 5; do
-            if docker pull ghcr.io/wxbet-org/dreamos-buildsystem-sources:latest; then
-              exit 0
-            fi
-            wait=$((i*10))
-            echo "pull attempt $i failed, retrying in ${wait}s..."
-            sleep $wait
-          done
-          echo "::error::sources image pull failed after 5 attempts"
-          exit 1
+          chmod +x "${IMAGE_DIR}/compose.sh"
+          "${IMAGE_DIR}/compose.sh"
 
-      - name: Build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: ./${{ env.IMAGE_DIR }}
-          push: true
-          tags: ${{ steps.tags.outputs.tag_list }}
-          build-args: |
-            IMAGE_COMMIT=${{ github.sha }}
-            SOURCES_IMAGE=ghcr.io/wxbet-org/dreamos-buildsystem-sources:latest
-          secret-files: |
-            pro-attach-config=./${{ env.IMAGE_DIR }}/pro-attach-config.yaml
-          # no-cache is deliberate: tag pushes are rare and we want the
-          # big RUN block (apt-get update + pro attach + apt-get upgrade
-          # + apt-get install) to actually re-run so ESM patches released
-          # since the previous tag land in the new image. Otherwise
-          # BuildKit would happily reuse the cached layer forever, since
-          # nothing about the RUN instruction itself changed.
-          no-cache: true
-
-      - name: Wipe local pro-attach-config.yaml
-        if: always()
-        run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"
-
-      # Note: no cleanup step here on purpose. Container packages on GHCR
-      # are manifest lists that reference "untagged" child manifests --
-      # naive "delete untagged" tools don't understand that structure and
-      # end up either silently no-op'ing or partially breaking things.
-      # Cleanup is handled by the separate cleanup-ghcr workflow which
-      # uses snok/container-retention-policy (manifest-list aware).
+      - name: Also push :latest (if this version is the highest)
+        if: steps.tags.outputs.is_highest == '1' && steps.tags.outputs.version != 'latest'
+        env:
+          DST: ${{ env.IMAGE }}:latest
+        run: |
+          "${IMAGE_DIR}/compose.sh"

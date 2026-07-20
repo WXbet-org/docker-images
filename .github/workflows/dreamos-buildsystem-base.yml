@@ -1,0 +1,105 @@
+# ---------------------------------------------------------------------
+# dreamos-buildsystem-base
+#
+# Builds the toolchain-only base image (Ubuntu 18.04 + Pro/ESM + OE tools,
+# NO sources). Small (~2 GB), fast CI, rebuild on every code change or when
+# you want fresh ESM patches.
+#
+# Tag scheme:   dreamos-buildsystem-base/<version>
+# Examples:     dreamos-buildsystem-base/v0.3.0
+#
+# After a successful base push, run the compose-ubnt18 workflow (or push
+# a dreamos-buildsystem-ubnt18/vX.Y.Z tag) to update the consumable
+# ubnt18 image on ghcr with the new base layers.
+# ---------------------------------------------------------------------
+
+name: dreamos-buildsystem-base
+
+on:
+  push:
+    tags:
+      - 'dreamos-buildsystem-base/*'
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-base
+  IMAGE_DIR: dreamos-buildsystem-base
+  TAG_PREFIX: dreamos-buildsystem-base/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout (full history for tag sort)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write pro-attach-config.yaml from secret
+        run: |
+          if [ -z "${{ secrets.UBUNTU_PRO_TOKEN }}" ]; then
+            echo "::error::Secret UBUNTU_PRO_TOKEN is not set."
+            exit 1
+          fi
+          cat > "${IMAGE_DIR}/pro-attach-config.yaml" <<EOF
+          token: ${{ secrets.UBUNTU_PRO_TOKEN }}
+          enable_services:
+            - esm-infra
+            - esm-apps
+          EOF
+          chmod 0600 "${IMAGE_DIR}/pro-attach-config.yaml"
+
+      - name: Determine version and :latest eligibility
+        id: tags
+        run: |
+          VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # workflow_dispatch: no tag context, just publish :latest
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "tag_list=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
+          HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
+
+          TAG_LIST="${IMAGE}:${VERSION}"
+          if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
+            echo "Version ${VERSION} is the highest -- will also push :latest"
+            TAG_LIST="${TAG_LIST},${IMAGE}:latest"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ env.IMAGE_DIR }}
+          push: true
+          tags: ${{ steps.tags.outputs.tag_list }}
+          build-args: |
+            IMAGE_COMMIT=${{ github.sha }}
+          secret-files: |
+            pro-attach-config=./${{ env.IMAGE_DIR }}/pro-attach-config.yaml
+          # no-cache: every tag push should re-run apt-get upgrade so
+          # ESM patches actually land in the new image. BuildKit would
+          # otherwise reuse the cached RUN layer indefinitely.
+          no-cache: true
+
+      - name: Wipe local pro-attach-config.yaml
+        if: always()
+        run: rm -f "${IMAGE_DIR}/pro-attach-config.yaml"

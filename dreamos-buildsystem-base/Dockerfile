@@ -1,24 +1,24 @@
 # syntax=docker/dockerfile:1.4
 #
-# Build image for opendreambox.
-# Based on Ubuntu 18.04 + Ubuntu Pro (ESM) for security updates, plus
-# the OE downloads snapshot inherited from dreamos-buildsystem-sources.
+# Toolchain-only image for opendreambox builds.
+# Ubuntu 18.04 + Ubuntu Pro (ESM) for security updates + full OE toolchain,
+# but WITHOUT the ~11 GB OE downloads snapshot.
 #
-# The sources image must exist locally (or be pullable from a registry)
-# before this build. Build it once from ../dreamos-buildsystem-sources/.
+# The final consumable image (dreamos-buildsystem-ubnt18) is composed on
+# the registry from this image + the dl-mirror layer of the separate
+# dreamos-buildsystem-sources image (see the compose-ubnt18 workflow).
 #
 # Build:
 #   DOCKER_BUILDKIT=1 docker build . \
 #     --secret id=pro-attach-config,src=pro-attach-config.yaml \
-#     -t dreamos-buildsystem-ubnt18
+#     -t dreamos-buildsystem-base
 #
-ARG SOURCES_IMAGE=dreamos-buildsystem-sources:latest
-FROM ${SOURCES_IMAGE}
+FROM ubuntu:18.04
 
 # Populated by CI (git SHA of the docker-images repo commit).
 ARG IMAGE_COMMIT=unknown
 LABEL org.opencontainers.image.source="https://github.com/WXbet-org/docker-images"
-LABEL org.opencontainers.image.description="opendreambox build environment (Ubuntu 18.04 + Pro/ESM)"
+LABEL org.opencontainers.image.description="opendreambox toolchain (Ubuntu 18.04 + Pro/ESM, no sources) -- base for the composed ubnt18 image"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.revision="${IMAGE_COMMIT}"
 
@@ -27,7 +27,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Stable machine-id: md5("dreamos-buildsystem-ubnt18").
 # With this, Canonical recognizes repeated builds as the SAME machine
 # and consumes only a single slot of your Pro token limit -- no matter
-# how often you rebuild this image.
+# how often you rebuild this image (locally, via CI, on other hosts).
+# Kept as ubnt18-derived so the composed image inherits it too.
 RUN echo "272a5f8626782e4844fecd4e84439e25" > /etc/machine-id \
  && mkdir -p /var/lib/dbus \
  && cp /etc/machine-id /var/lib/dbus/machine-id
