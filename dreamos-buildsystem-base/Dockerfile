@@ -63,7 +63,9 @@ RUN --mount=type=secret,id=pro-attach-config,required=true \
     # any PPA at default 500 -- so without this override apt would pick
     # git 2.17.1+esmN over the PPA's 2.50.x every time. Pin git+git-man
     # from git-core PPA at 600 so we actually get the modern version.
-    printf 'Package: git git-man\nPin: release o=LP-PPA-git-core-ubuntu-git-core-ppa\nPin-Priority: 600\n' \
+    # Origin string 'LP-PPA-git-core' is verified from the PPA's Release
+    # file: curl http://ppa.launchpad.net/git-core/ppa/ubuntu/dists/bionic/Release
+    printf 'Package: git git-man\nPin: release o=LP-PPA-git-core\nPin-Priority: 600\n' \
         > /etc/apt/preferences.d/git-core-ppa.pref; \
     # Silence pro's chatty stdout -- it prints the account email and
     # subscription summary which we don't want in public CI logs. Errors
