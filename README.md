@@ -94,19 +94,16 @@ Each BuildEnv uses a Makefile as its top-level entry point. `make help` inside o
 ```sh
 cd ~/opendreambox/krogoth   # or ~/opendreambox/pyro, ~/dreamlegacy/{krogoth,pyro}
 
-# Optional pre-fetch of all sources for the target -- shakes out
-# network / mirror issues before the long build starts
-MACHINE=dm900 make download
-
 # Build the firmware image (default target: dreambox-image)
 MACHINE=dm900 make image
 ```
 
 Other useful Make targets:
 
-- `make image MACHINE=…` — full firmware image
-- `make console-image MACHINE=…` — minimal console-only variant
-- `make rescue-image MACHINE=…` — recovery image
+- `MACHINE=… make image` — full firmware image
+- `MACHINE=… make console-image` — minimal console-only variant
+- `MACHINE=… make rescue-image` — recovery image
+- `MACHINE=… make download` — pre-fetch of all sources for the target (shakes out network / mirror issues before the long build starts)
 - `make update` — refresh the SDK (submodules) after upstream changes
 - `make help` — the authoritative list, plus your current settings
 

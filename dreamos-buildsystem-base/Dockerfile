@@ -17,10 +17,13 @@ FROM ubuntu:18.04
 
 # Populated by CI (git SHA of the docker-images repo commit).
 ARG IMAGE_COMMIT=unknown
+ARG IMAGE_VERSION=dev
 LABEL org.opencontainers.image.source="https://github.com/WXbet-org/docker-images"
 LABEL org.opencontainers.image.description="opendreambox toolchain (Ubuntu 18.04 + Pro/ESM, no sources) -- base for the composed ubnt18 image"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.revision="${IMAGE_COMMIT}"
+LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
+ENV DREAMOS_IMAGE_VERSION="${IMAGE_VERSION}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -189,6 +192,21 @@ RUN sed -ri \
 
 COPY --chmod=0755 entrypoint.sh          /usr/local/bin/entrypoint.sh
 COPY --chmod=0755 bootstrap-buildenv.sh  /usr/local/bin/bootstrap-buildenv
+COPY --chmod=0755 dreamos-motd.sh        /usr/local/bin/dreamos-motd
+
+# MOTD wiring: shown once per interactive shell (guard-var internal to
+# the script). Login shells (SSH) source /etc/profile.d/; non-login
+# interactive shells (docker run/exec) read /etc/bash.bashrc.
+RUN ln -sf /usr/local/bin/dreamos-motd /etc/profile.d/00-dreamos-motd.sh \
+ && printf '\n# dreamos-buildsystem MOTD\n[ -x /usr/local/bin/dreamos-motd ] && . /usr/local/bin/dreamos-motd\n' \
+        >> /etc/bash.bashrc \
+ # remove default Ubuntu motd noise so ours stands alone
+ && rm -f /etc/update-motd.d/00-header \
+          /etc/update-motd.d/10-help-text \
+          /etc/update-motd.d/50-motd-news \
+          /etc/update-motd.d/80-esm \
+          /etc/update-motd.d/91-release-upgrade \
+          /etc/legal 2>/dev/null || true
 
 USER $BUILD_USER
 WORKDIR /home/$BUILD_USER
