@@ -224,6 +224,10 @@ Both base and ubnt18 `:latest` are updated only when the pushed version is the h
 
 The [s4 build system](https://git.streamboard.tv/common/simplebuild4) is published as `ghcr.io/wxbet-org/simplebuild4`. The **source lives in GitLab**; this repo only holds the packaging (Dockerfile + .dockerignore + docker-compose.yaml) and the release workflow.
 
+### User deployment
+
+Full docs (interactive TUI mode, headless web+mcp, data persistence, updates): [s4 wiki → Docker](https://git.streamboard.tv/common/simplebuild4/-/wikis/getting-started/docker).
+
 ### Trigger flow
 
 1. Someone pushes a git tag (e.g. `1.2.3`) to the GitLab s4 repo.
@@ -231,22 +235,3 @@ The [s4 build system](https://git.streamboard.tv/common/simplebuild4) is publish
 3. [`.github/workflows/simplebuild4.yml`](.github/workflows/simplebuild4.yml) runs, clones s4 at that SHA, overlays this repo's Dockerfile into the clone, and builds + pushes `ghcr.io/wxbet-org/simplebuild4:<tag>` (and `:latest` if this tag is the highest sortable one in s4).
 
 For a manual run — e.g. to rebuild an existing tag or build HEAD of the default branch — trigger the workflow via `workflow_dispatch` from the Actions tab (optional `tag` input).
-
-### GitLab-side setup
-
-The GitLab CI job needs a GitHub token to POST the dispatch:
-
-- Fine-grained PAT, scope `actions: write` on `WXbet-org/docker-images`.
-- Stored as protected CI variable `GH_DISPATCH_TOKEN` in the s4 GitLab project.
-
-### User deployment
-
-End users grab the shipped compose file from this repo's raw URL:
-
-```bash
-mkdir -p ~/s4-data && cd ~/s4-data
-curl -O https://raw.githubusercontent.com/WXbet-org/docker-images/master/simplebuild4/docker-compose.yaml
-docker compose up -d
-```
-
-Full docs (interactive TUI mode, headless web+mcp, data persistence, updates): [s4 wiki → Docker](https://git.streamboard.tv/common/simplebuild4/-/wikis/getting-started/docker).
