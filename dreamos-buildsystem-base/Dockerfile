@@ -90,6 +90,7 @@ RUN --mount=type=secret,id=pro-attach-config,required=true \
         cpio \
         curl \
         cvs \
+        dialog \
         diffstat \
         dos2unix \
         file \
@@ -117,6 +118,7 @@ RUN --mount=type=secret,id=pro-attach-config,required=true \
         libffi-dev \
         libglib2.0-dev \
         libncurses5-dev \
+        libperl4-corelibs-perl \
         libreadline-dev \
         libssl-dev \
         libtool \
@@ -178,7 +180,13 @@ ARG BUILD_GID=1000
 RUN groupadd -g "$BUILD_GID" "$BUILD_USER" \
  && useradd  -m -u "$BUILD_UID" -g "$BUILD_GID" -s /bin/bash "$BUILD_USER" \
  && echo "${BUILD_USER}:${BUILD_USER}" | chpasswd \
- && echo "$BUILD_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$BUILD_USER \
+ # Passwordless sudo + preserve DEBIAN_FRONTEND so `sudo apt install ...`
+ # inside the container stays noninteractive (otherwise sudo strips the
+ # env var set by the image and debconf falls back to Dialog, which then
+ # complains "No usable dialog-like program is installed"). The image
+ # is designed for automation -- interactive prompts serve no purpose.
+ && printf '%s ALL=(ALL) NOPASSWD:ALL\nDefaults env_keep += "DEBIAN_FRONTEND"\n' \
+        "$BUILD_USER" > /etc/sudoers.d/$BUILD_USER \
  && chmod 0440 /etc/sudoers.d/$BUILD_USER
 
 # SSH server config: enable password auth (so builder/builder works),
