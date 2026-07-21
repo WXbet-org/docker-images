@@ -84,12 +84,14 @@ jobs:
 
       - name: Overlay build artefacts into clone
         run: |
-          # These three files live only here (in docker-images), not in
-          # s4 — the s4 repo is source-of-truth for the application,
-          # this repo is source-of-truth for how it's containerised.
-          cp simplebuild4/Dockerfile          s4-src/Dockerfile
-          cp simplebuild4/.dockerignore       s4-src/.dockerignore
-          cp simplebuild4/docker-compose.yaml s4-src/docker-compose.yaml
+          # These files live only here (in docker-images), not in s4
+          # — the s4 repo is source-of-truth for the application, this
+          # repo is source-of-truth for how it's containerised.
+          # docker-compose.yaml is deployment config, not application
+          # content — deliberately NOT copied into the build context,
+          # so it doesn't get baked into the image via `COPY . /app`.
+          cp simplebuild4/Dockerfile    s4-src/Dockerfile
+          cp simplebuild4/.dockerignore s4-src/.dockerignore
 
       - name: Determine version + :latest eligibility
         id: tags
