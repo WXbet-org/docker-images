@@ -30,7 +30,7 @@ Public image, no `docker login` needed:
 docker pull ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:latest
 ```
 
-Roughly 13 GB on disk — the bulk is a baked-in OE downloads snapshot at `/opt/dl-mirror` that bitbake uses as PREMIRROR, so most fetches during a build never touch the network.
+Roughly 19 GB compressed download / ~20 GB on disk — the bulk is a baked-in OE downloads snapshot at `/opt/dl-mirror` (~19 GB alone) that bitbake uses as PREMIRROR, so most fetches during a build never touch the network. The actual Ubuntu + toolchain part is only ~1.2 GB.
 
 ### 3. Start it
 
@@ -166,7 +166,7 @@ To keep CI fast without dragging the 11 GB sources snapshot into every rebuild, 
 ```
 dreamos-buildsystem-base            dreamos-buildsystem-sources
    (ubuntu + toolchain,             (ubuntu + /opt/dl-mirror,
-    ~2 GB, CI-built)                 ~11 GB, built manually on build server)
+    ~1.2 GB, CI-built)               ~19 GB, built manually on build server)
              \                              /
               \                            /
                \_________ regctl _________/
@@ -176,14 +176,16 @@ dreamos-buildsystem-base            dreamos-buildsystem-sources
                               │
                               ▼
               dreamos-buildsystem-ubnt18
-              (~13 GB, what consumers pull)
+              (~20 GB, what consumers pull)
 ```
 
 **Why this split:**
 
-- **base** — rebuilds on every code/toolchain/ESM-patch change. Small, fast CI (~5 min).
-- **sources** — rebuilds only when the OE downloads snapshot needs refreshing (rare, manual on the build server).
+- **base** — rebuilds on every code/toolchain/ESM-patch change. Small (~1.2 GB), fast CI (~5 min). The next base release only re-pushes this small layer to ghcr; the huge sources layer stays untouched.
+- **sources** — rebuilds only when the OE downloads snapshot needs refreshing (rare, manual on the build server). Docker layer is ~19 GB even though the raw `sources-seed/` folder on the host is only ~11 GB — the layer includes tar metadata for the ~1200 individual files + git-mirror objects.
 - **ubnt18** — composed on ghcr from base + sources via `regctl` and OCI cross-repo blob mount. **No layer blobs are downloaded during composition** — the ubnt18 manifest is crafted from the existing base+sources manifests and pushed. Runtime: ~30 seconds on a stock GHA runner.
+
+**Consumer download cost after a fresh base release:** the sources layer is unchanged → already-cached by Docker → only ~1.2 GB of new toolchain layer is pulled. First-time pull of the full image is ~19 GB compressed.
 
 ## Layout
 
