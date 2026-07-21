@@ -51,6 +51,12 @@ if ! pgrep -x sshd >/dev/null 2>&1; then
     sudo /usr/sbin/sshd
 fi
 
+# Ensure a GPG signing key exists in ~/.gnupg/. Idempotent: only runs
+# key generation when no keyring is present. Placed here (not only in
+# bootstrap-buildenv) so users of pre-existing BuildEnvs pick up a key
+# after pulling a newer image, even without re-bootstrapping.
+ensure-gpg-key
+
 # Auto-bootstrap the standard four BuildEnv checkouts on the very first
 # container start (marker in $HOME so the host bind-mount persists it).
 # To re-trigger later: `rm ~/.auto-bootstrap-done` and restart.

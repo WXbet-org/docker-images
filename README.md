@@ -157,7 +157,89 @@ swap=8GB
 
 Then `wsl --shutdown` and restart. With ≥16 GB you can leave the auto-detected caps alone.
 
-Deep-dive documentation (Dockerfile internals, PREMIRRORS setup, GPG package signing, the two-image split): [`dreamos-buildsystem-ubnt18/README.md`](dreamos-buildsystem-ubnt18/README.md).
+### Package feed signing
+
+Signing is **enabled by default on the `opendreambox` fork** (which carries the "sign DEB package feeds" patch on `openembedded-core`) and **disabled by default on `dreamlegacy`** (whose `DpkgIndexer` ignores the flag — enabling would be a silent no-op). No manual switch-over needed either way; `bootstrap-buildenv` reads the fork and does the right thing when it writes `conf/local-ext.conf`.
+
+The signing key itself is auto-generated on the *first container start* by `entrypoint.sh` (via `ensure-gpg-key`) if no keyring exists in `~/.gnupg/` yet: 4096-bit RSA, no expiry, identity `dreamos-buildsystem <builder@dreamos-buildsystem.local>`, random 32-char passphrase written to `~/.gnupg/passphrase` (mode 0600). Everything lives on the host bind-mount, so keys persist across container restarts and are shared across all BuildEnvs on that host. The generated fingerprint is then substituted into `conf/local-ext.conf` when `bootstrap-buildenv` runs for a BuildEnv.
+
+The block that lands in `conf/local-ext.conf` (uncommented on opendreambox, commented on dreamlegacy):
+
+```sh
+PACKAGE_FEED_SIGN = '1'
+PACKAGE_CLASSES = "package_deb sign_package_feed"
+PACKAGE_FEED_GPG_BACKEND = 'local'
+PACKAGE_FEED_GPG_SIGNATURE_TYPE = 'BIN'
+PACKAGE_FEED_GPG_NAME = "<auto-filled fingerprint>"
+PACKAGE_FEED_GPG_PASSPHRASE_FILE = "/home/builder/.gnupg/passphrase"
+```
+
+Caveats:
+
+- On dreamlegacy the block is commented out because vanilla dreamlegacy (both `obi/krogoth` and `obi/pyro`) never reads `PACKAGE_FEED_SIGN` / `PACKAGE_FEED_GPG_*` in `DpkgIndexer` — you'd get unsigned `.deb` feeds either way, no error. **IPK** feeds (via `OpkgIndexer`) do sign on both branches, so if you switch `PACKAGE_CLASSES` to `package_ipk` you can uncomment the block by hand.
+- Re-running `bootstrap-buildenv` reuses an existing keyring — no rotation, no fingerprint change in `local-ext.conf`.
+- To disable signing on opendreambox: comment the six lines out again in that BuildEnv's `conf/local-ext.conf`.
+- To use your own key instead of the auto-generated one: drop your `.gnupg/` into `~/dreamos-builds/.gnupg/` on the host *before* the container's first start, and auto-generation is skipped. Make sure `~/.gnupg/passphrase` (mode 0600, plain text) matches.
+
+#### Managing signing keys
+
+All GPG commands run inside the container against `~/.gnupg/` (which is your host `~/dreamos-builds/.gnupg/` bind-mounted in). Anything you do here persists.
+
+**List keys** — what's there and which fingerprint to reference in `local-ext.conf`:
+
+```sh
+gpg --list-secret-keys --keyid-format=long
+# Long fingerprint only (the format PACKAGE_FEED_GPG_NAME expects):
+gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10}'
+```
+
+**Generate a new key manually** — batch mode, no interactive prompts:
+
+```sh
+PASS='choose-a-passphrase'
+gpg --batch --pinentry-mode loopback --generate-key <<EOF
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: RSA
+Subkey-Length: 4096
+Name-Real: my-signing-key
+Name-Email: builder@example.local
+Expire-Date: 0
+Passphrase: $PASS
+%commit
+EOF
+echo "$PASS" > ~/.gnupg/passphrase && chmod 600 ~/.gnupg/passphrase
+```
+
+Then paste the new fingerprint (from `--list-secret-keys` above) into `PACKAGE_FEED_GPG_NAME` in every BuildEnv's `conf/local-ext.conf`.
+
+**Import an existing key** (e.g. copied from another build server):
+
+```sh
+gpg --import /path/to/private.asc     # secret key
+gpg --import /path/to/public.asc      # public key (of a co-signer)
+# Give the imported key ultimate trust so signing doesn't warn:
+FPR=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')
+echo "$FPR:6:" | gpg --import-ownertrust
+```
+
+**Export the public key** — needed on the receiver side (STB, apt-key on a test client) to verify signed feeds:
+
+```sh
+gpg --armor --export builder@dreamos-buildsystem.local > dreamos-feed-pubkey.asc
+# → deploy to the client and: apt-key add dreamos-feed-pubkey.asc
+```
+
+**Rotate / remove a key**:
+
+```sh
+gpg --delete-secret-keys <FINGERPRINT>   # deletes secret half first
+gpg --delete-keys        <FINGERPRINT>   # then the public half
+```
+
+After rotation don't forget to update `PACKAGE_FEED_GPG_NAME` in each BuildEnv's `conf/local-ext.conf` and re-distribute the new public key to feed consumers.
+
+Deep-dive documentation (Dockerfile internals, PREMIRRORS setup, the two-image split): [`dreamos-buildsystem-ubnt18/README.md`](dreamos-buildsystem-ubnt18/README.md).
 
 ## Architecture — three images, composed on the registry
 

@@ -192,6 +192,7 @@ RUN sed -ri \
 
 COPY --chmod=0755 entrypoint.sh          /usr/local/bin/entrypoint.sh
 COPY --chmod=0755 bootstrap-buildenv.sh  /usr/local/bin/bootstrap-buildenv
+COPY --chmod=0755 ensure-gpg-key.sh      /usr/local/bin/ensure-gpg-key
 COPY --chmod=0755 dreamos-motd.sh        /usr/local/bin/dreamos-motd
 
 # MOTD wiring: shown once per interactive shell (guard-var internal to

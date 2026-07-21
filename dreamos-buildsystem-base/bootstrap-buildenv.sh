@@ -94,6 +94,16 @@ if [ ! -L sources ] || [ "$(readlink sources)" != "../../sources" ]; then
     ln -s ../../sources sources
 fi
 
+# --- 3.5 GPG signing key -- delegate to the shared helper -----------
+# The helper is also called from entrypoint.sh on every container start,
+# so on the primary path a key is already there and this is a no-op.
+# Kept here as a safety net for entry via `docker exec` on containers
+# that were started before ensure-gpg-key existed.
+ensure-gpg-key
+
+GPG_FINGERPRINT=$(gpg --list-secret-keys --keyid-format=long --with-colons 2>/dev/null \
+                     | awk -F: '/^fpr:/{print $10; exit}')
+
 # --- 4. local-ext.conf: only create if absent -------------------------
 # opendreambox's `MACHINE=xxx make init` builds a per-machine local.conf
 # under build/<MACHINE>/conf/ that auto-includes ../../conf/local-ext.conf
@@ -148,24 +158,25 @@ DISTRO_FEED_URI = "https://dreamboxupdate.com/opendreambox/2.6/unstable/${PR}/${
 
 # ================== PACKAGE SIGNING ==================
 
-# All commented out by default. Only some opendreambox forks (e.g. WXbet)
-# carry the "package_manager: sign DEB package feeds" patch on
-# openembedded-core that implements DEB package signing. Vanilla /
-# dreamlegacy don't -- and even PACKAGE_FEED_SIGN='0' isn't enough
-# because PACKAGE_CLASSES pulling in sign_package_feed.bbclass triggers
-# other paths that assume signing infrastructure exists.
+# For opendreambox (WXbet fork): the block below is ENABLED by default.
+# That fork carries the "sign DEB package feeds" patch on openembedded-core
+# so PACKAGE_FEED_SIGN='1' actually signs the .deb feed indices.
 #
-# To enable (only if your fork supports it): uncomment ALL lines below,
-# adjust PACKAGE_FEED_GPG_NAME to your key's fingerprint, and place the
-# keyring at host ~/dreamos-builds/.gnupg/ (which appears as
-# /home/builder/.gnupg/ inside the container thanks to the bind-mount)
-# plus a plain-text passphrase file (chmod 0600).
+# For dreamlegacy: the block stays COMMENTED OUT by default because
+# vanilla dreamlegacy's DpkgIndexer never reads PACKAGE_FEED_SIGN /
+# PACKAGE_FEED_GPG_* -- enabling it is a silent no-op (no error, but the
+# .deb feeds go out unsigned anyway). IPK signing does work on dreamlegacy
+# if you switch PACKAGE_CLASSES to package_ipk.
+#
+# The signing key + passphrase file are auto-generated on first container
+# start (by entrypoint.sh via ensure-gpg-key), the fingerprint is
+# substituted in-place below, and everything persists on the host bind-mount.
 #
 #PACKAGE_FEED_SIGN = '1'
 #PACKAGE_CLASSES = "package_deb sign_package_feed"
 #PACKAGE_FEED_GPG_BACKEND = 'local'
 #PACKAGE_FEED_GPG_SIGNATURE_TYPE = 'BIN'
-#PACKAGE_FEED_GPG_NAME = "11C6F48B5290A9850EE7D61D7C374EAD72A9AED9"
+#PACKAGE_FEED_GPG_NAME = "@GPG_FINGERPRINT@"
 #PACKAGE_FEED_GPG_PASSPHRASE_FILE = "/home/builder/.gnupg/passphrase"
 
 
@@ -204,6 +215,21 @@ DISTRO_FEED_URI = "https://dreamboxupdate.com/opendreambox/2.6/unstable/${PR}/${
 #PARALLEL_MAKE_pn-qtwebkit        = "-j 4"
 #PARALLEL_MAKE_pn-qtwebkit-native = "-j 4"
 LOCALEXT
+    # Substitute the actual key fingerprint into the template placeholder.
+    # Done post-write (rather than expanding in the heredoc) so bitbake
+    # variables like ${MACHINE} / ${PR} / ${sysconfdir} stay literal.
+    if [ -n "$GPG_FINGERPRINT" ]; then
+        sed -i "s|@GPG_FINGERPRINT@|$GPG_FINGERPRINT|" conf/local-ext.conf
+    fi
+
+    # On the opendreambox fork (WXbet) DEB feed signing actually works,
+    # so uncomment the PACKAGE SIGNING block by default. dreamlegacy
+    # leaves it commented out because its DpkgIndexer ignores the flag.
+    if [ "$fork" = "opendreambox" ]; then
+        echo ">>> Fork is opendreambox -- enabling PACKAGE_FEED_SIGN by default"
+        sed -i -E '/^#(PACKAGE_FEED_SIGN|PACKAGE_CLASSES|PACKAGE_FEED_GPG_)/s/^#//' \
+            conf/local-ext.conf
+    fi
 else
     echo ">>> conf/local-ext.conf already exists, leaving untouched"
 fi
