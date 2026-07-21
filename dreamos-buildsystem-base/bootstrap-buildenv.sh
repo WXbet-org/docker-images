@@ -148,25 +148,25 @@ DISTRO_FEED_URI = "https://dreamboxupdate.com/opendreambox/2.6/unstable/${PR}/${
 
 # ================== PACKAGE SIGNING ==================
 
-# OFF by default. Only some opendreambox forks (e.g. WXbet) carry the
-# "package_manager: sign DEB package feeds" patch on openembedded-core
-# that implements DEB package signing. Vanilla / dreamlegacy don't --
-# turning this on there fails with
-#   NotImplementedError: Package feed signing not implementd for dpkg
-# from openembedded-core/meta/lib/oe/package_manager.py.
+# All commented out by default. Only some opendreambox forks (e.g. WXbet)
+# carry the "package_manager: sign DEB package feeds" patch on
+# openembedded-core that implements DEB package signing. Vanilla /
+# dreamlegacy don't -- and even PACKAGE_FEED_SIGN='0' isn't enough
+# because PACKAGE_CLASSES pulling in sign_package_feed.bbclass triggers
+# other paths that assume signing infrastructure exists.
 #
-# To enable (only if your fork supports it):
-#   1. Set PACKAGE_FEED_SIGN = '1' below
-#   2. Place your GPG keyring at host ~/dreamos-builds/.gnupg/ (which
-#      appears as /home/builder/.gnupg/ inside the container thanks to
-#      the bind-mount) plus a plain-text passphrase file (chmod 0600)
-#   3. Adjust PACKAGE_FEED_GPG_NAME to your key's fingerprint
-PACKAGE_FEED_SIGN = '0'
-PACKAGE_CLASSES = "package_deb sign_package_feed"
-PACKAGE_FEED_GPG_BACKEND = 'local'
-PACKAGE_FEED_GPG_SIGNATURE_TYPE = 'BIN'
-PACKAGE_FEED_GPG_NAME = "11C6F48B5290A9850EE7D61D7C374EAD72A9AED9"
-PACKAGE_FEED_GPG_PASSPHRASE_FILE = "/home/builder/.gnupg/passphrase"
+# To enable (only if your fork supports it): uncomment ALL lines below,
+# adjust PACKAGE_FEED_GPG_NAME to your key's fingerprint, and place the
+# keyring at host ~/dreamos-builds/.gnupg/ (which appears as
+# /home/builder/.gnupg/ inside the container thanks to the bind-mount)
+# plus a plain-text passphrase file (chmod 0600).
+#
+#PACKAGE_FEED_SIGN = '1'
+#PACKAGE_CLASSES = "package_deb sign_package_feed"
+#PACKAGE_FEED_GPG_BACKEND = 'local'
+#PACKAGE_FEED_GPG_SIGNATURE_TYPE = 'BIN'
+#PACKAGE_FEED_GPG_NAME = "11C6F48B5290A9850EE7D61D7C374EAD72A9AED9"
+#PACKAGE_FEED_GPG_PASSPHRASE_FILE = "/home/builder/.gnupg/passphrase"
 LOCALEXT
 else
     echo ">>> conf/local-ext.conf already exists, leaving untouched"
