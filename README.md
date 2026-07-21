@@ -124,6 +124,39 @@ bitbake enigma2   # or any other recipe
 
 Set `MACHINE` per-invocation via `MACHINE=… make …` or persist it inside a BuildEnv with `echo MACHINE=dm900 >> conf/make.conf`.
 
+### Notes for constrained hosts (WSL2, small VMs, laptops)
+
+opendreambox auto-detects `nproc` and sets `BB_NUMBER_THREADS` + `PARALLEL_MAKE` aggressively. Template-heavy recipes like `boost::log` and `qtwebkit` can allocate 1–2 GB of RAM per `cc1plus` — so a stock WSL2 instance (default 6-8 GB) OOM-kills the compiler mid-build:
+
+```
+arm-oe-linux-gnueabi-g++: internal compiler error: Killed (program cc1plus)
+```
+
+Fix in the affected BuildEnv's `conf/local-ext.conf` — the [`bootstrap-buildenv`](dreamos-buildsystem-base/bootstrap-buildenv.sh) template ships pre-commented lines for this, uncomment to activate:
+
+```sh
+# ~8 GB host (typical WSL2):
+BB_NUMBER_THREADS = "3"
+PARALLEL_MAKE     = "-j 4"
+
+# On a bigger host (~16 GB) that only chokes on the known hogs, the
+# targeted per-recipe caps alone are usually enough:
+PARALLEL_MAKE_pn-boost           = "-j 4"
+PARALLEL_MAKE_pn-boost-native    = "-j 4"
+PARALLEL_MAKE_pn-qtwebkit        = "-j 4"
+PARALLEL_MAKE_pn-qtwebkit-native = "-j 4"
+```
+
+Alternatively give WSL2 more RAM/swap once in `%USERPROFILE%\.wslconfig`:
+
+```ini
+[wsl2]
+memory=16GB
+swap=8GB
+```
+
+Then `wsl --shutdown` and restart. With ≥16 GB you can leave the auto-detected caps alone.
+
 Deep-dive documentation (Dockerfile internals, PREMIRRORS setup, GPG package signing, the two-image split): [`dreamos-buildsystem-ubnt18/README.md`](dreamos-buildsystem-ubnt18/README.md).
 
 ## Architecture — three images, composed on the registry

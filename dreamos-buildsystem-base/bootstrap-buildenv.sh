@@ -167,6 +167,42 @@ DISTRO_FEED_URI = "https://dreamboxupdate.com/opendreambox/2.6/unstable/${PR}/${
 #PACKAGE_FEED_GPG_SIGNATURE_TYPE = 'BIN'
 #PACKAGE_FEED_GPG_NAME = "11C6F48B5290A9850EE7D61D7C374EAD72A9AED9"
 #PACKAGE_FEED_GPG_PASSPHRASE_FILE = "/home/builder/.gnupg/passphrase"
+
+
+# ================== MEMORY / PARALLELISM CAPS ==================
+
+# Commented out by default -- opendreambox auto-detects nproc and sets
+# BB_NUMBER_THREADS + PARALLEL_MAKE aggressively. That's fine on a real
+# build server (32+ GB RAM) but OOM-kills cc1plus on constrained hosts
+# like a stock WSL2 instance (6-8 GB RAM). Symptoms:
+#     internal compiler error: Killed (program cc1plus)
+# on template-heavy recipes -- most commonly boost::log and qtwebkit.
+#
+# Two levers:
+#   BB_NUMBER_THREADS = how many recipes bitbake compiles in parallel
+#   PARALLEL_MAKE     = -j inside each recipe's make invocation
+# Worst-case peak = BB_NUMBER_THREADS x PARALLEL_MAKE cc1plus instances,
+# each ~500 MB to 2 GB during heavy template work.
+#
+# Rule of thumb by host RAM:
+#   ~8 GB   :  BB_NUMBER_THREADS = "3",  PARALLEL_MAKE = "-j 4"
+#   ~16 GB  :  BB_NUMBER_THREADS = "6",  PARALLEL_MAKE = "-j 6"
+#   ~32 GB  :  no caps needed (auto-detected values are fine)
+#
+# Per-recipe overrides (targeted, only for the known hogs) are usually
+# enough if the global auto-detected values are within reason for your
+# host. The BB_NUMBER_THREADS / PARALLEL_MAKE globals are the escape
+# hatch when even per-recipe caps aren't sufficient.
+
+# --- global caps (uncomment on constrained hosts) ---
+#BB_NUMBER_THREADS = "3"
+#PARALLEL_MAKE     = "-j 4"
+
+# --- per-recipe caps (targeted, safe to leave on even with plenty of RAM) ---
+#PARALLEL_MAKE_pn-boost           = "-j 4"
+#PARALLEL_MAKE_pn-boost-native    = "-j 4"
+#PARALLEL_MAKE_pn-qtwebkit        = "-j 4"
+#PARALLEL_MAKE_pn-qtwebkit-native = "-j 4"
 LOCALEXT
 else
     echo ">>> conf/local-ext.conf already exists, leaving untouched"
