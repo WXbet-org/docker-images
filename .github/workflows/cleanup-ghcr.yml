@@ -1,14 +1,29 @@
 # ---------------------------------------------------------------------
 # cleanup-ghcr
 #
-# Prunes truly orphaned untagged container versions from the two GHCR
-# packages this repo publishes. Runs weekly on Sunday night and can be
-# triggered manually.
+# Prunes old versions from the GHCR packages this repo publishes.
+# Three steps, in order:
 #
-# Uses snok/container-retention-policy which is manifest-list aware:
-# it walks each tagged manifest's children and refuses to delete
-# anything still referenced -- unlike naive "delete all untagged"
-# tools which either silently no-op or corrupt tagged images.
+#   1a. Delete old dreamos v*-releases   (keep 3 newest per image).
+#   1b. Delete old simplebuild4 date-semver releases (keep 10 newest).
+#   2.  Delete orphaned untagged versions across all images (keep 5
+#       newest as safety buffer).
+#
+# Steps 1a/1b run before step 2 so any child manifests (attestations,
+# platform children) orphaned by a deletion become plain untagged and
+# get swept up in the same run rather than waiting a week for the
+# next cron.
+#
+# dreamos-buildsystem-sources is intentionally excluded from tagged
+# cleanup -- its date-based tags (2026-07-20 etc.) are a manual
+# release archive that stays forever.
+#
+# Runs weekly on Sunday night and can be triggered manually.
+#
+# Uses snok/container-retention-policy which walks each tagged
+# manifest's children and refuses to delete anything still referenced
+# -- unlike naive "delete all untagged" tools which either silently
+# no-op or corrupt tagged images.
 #
 # Requires GITHUB_TOKEN with `packages: write` (repo-level). The
 # packages themselves need each repo in their "Manage Actions access"
@@ -26,28 +41,81 @@ on:
 permissions:
   packages: write
 
+env:
+  IMAGES_ALL:      'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources simplebuild4'
+  IMAGES_DREAMOS:  'dreamos-buildsystem-base dreamos-buildsystem-ubnt18'
+  IMAGES_S4:       'simplebuild4'
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      # ------------------------------------------------------------------
+      # Step 1a: dreamos-* -- keep 3 newest v* tagged releases per image.
+      #
+      # image-tags='v*': match vX.Y.Z tags only. Does NOT match `latest`
+      #   or dreamos-buildsystem-sources' date-based tags like
+      #   '2026-07-20' -- those stay untouched here.
+      # keep-n-most-recent=3: current release always carries vX.Y.Z + latest,
+      #   is always newest, thus always in the top 3 -- `latest` is safe.
+      # cut-off=1h: guards against racing with a fresh release push.
+      # dreamos-buildsystem-sources is intentionally NOT in this step; its
+      # date-based tags stay forever (they're a manual release archive).
+      # ------------------------------------------------------------------
+      - name: Delete old dreamos v*-releases (keep 3 newest per image)
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: wxbet-org
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: ${{ env.IMAGES_DREAMOS }}
+          image-tags: 'v*'
+          tag-selection: tagged
+          keep-n-most-recent: 3
+          cut-off: 1h
+          dry-run: false
+
+      # ------------------------------------------------------------------
+      # Step 1b: simplebuild4 -- keep 3 newest YYYY.MM.BUILD tagged
+      # releases. Uses date-semver tags like '2026.04.503' pulled from
+      # the GitLab source repo (see simplebuild4.yml).
+      #
+      # image-tags='[0-9]*.[0-9]*.[0-9]*': match numeric.numeric.numeric,
+      #   i.e. dot-separated -- pointedly NOT the dash-separated dates
+      #   sources uses, and not `latest`.
+      # keep-n-most-recent=3: same retention as the dreamos images -- 3
+      #   rollback targets plus the current release covers the usual need.
+      # ------------------------------------------------------------------
+      - name: Delete old simplebuild4 date-semver releases (keep 3 newest)
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: wxbet-org
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: ${{ env.IMAGES_S4 }}
+          image-tags: '[0-9]*.[0-9]*.[0-9]*'
+          tag-selection: tagged
+          keep-n-most-recent: 3
+          cut-off: 1h
+          dry-run: false
+
+      # ------------------------------------------------------------------
+      # Step 2: prune truly orphaned untagged versions across ALL images.
+      #
+      # image-tags='!*': never touch anything that still has any tag.
+      # tag-selection=untagged: only untagged versions considered.
+      # keep-n-most-recent=5: layered safety -- keep the 5 newest
+      #   untagged per package. Buildx pushes tagged images as OCI
+      #   index manifests referencing platform + attestation children
+      #   as untagged; the tool auto-detects and protects those, but
+      #   this buffer covers races where a step-1 deletion moments ago
+      #   just orphaned children that haven't been indexed yet.
+      # cut-off=1h: guards against a still-running release build.
+      # ------------------------------------------------------------------
       - name: Delete orphaned untagged versions
         uses: snok/container-retention-policy@v3.1.0
         with:
           account: wxbet-org
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: 'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources simplebuild4'
-          # tag-selection=untagged: only consider untagged versions.
-          # image-tags='!*': never touch anything with any tag.
-          # keep-n-most-recent=5: layered safety -- keep the 5 newest
-          #   untagged in each package no matter what. Buildx pushes
-          #   tagged images as OCI index manifests that reference
-          #   platform + attestation child manifests as untagged; those
-          #   children must survive or the tagged image breaks.
-          # cut-off=1h: extra guard against racing with a fresh release.
-          #   If a release just pushed and cleanup runs seconds later,
-          #   the just-published untagged children are all <1h old and
-          #   stay protected. Cron runs Sunday 03:00 UTC so this only
-          #   matters for manual dispatches close to a tag push.
+          image-names: ${{ env.IMAGES_ALL }}
           image-tags: '!*'
           tag-selection: untagged
           keep-n-most-recent: 5
