@@ -148,16 +148,20 @@ DISTRO_FEED_URI = "https://dreamboxupdate.com/opendreambox/2.6/unstable/${PR}/${
 
 # ================== PACKAGE SIGNING ==================
 
-# Package signing needs a GPG keyring + passphrase file INSIDE the
-# container at ~/.gnupg/. Since $HOME is bind-mounted from the host's
-# ~/dreamos-builds/, place your key material at:
-#     host: ~/dreamos-builds/.gnupg/
-#     host: ~/dreamos-builds/.gnupg/passphrase   (plain text, mode 0600)
-# and it appears as /home/builder/.gnupg/ inside the container.
+# OFF by default. Only some opendreambox forks (e.g. WXbet) carry the
+# "package_manager: sign DEB package feeds" patch on openembedded-core
+# that implements DEB package signing. Vanilla / dreamlegacy don't --
+# turning this on there fails with
+#   NotImplementedError: Package feed signing not implementd for dpkg
+# from openembedded-core/meta/lib/oe/package_manager.py.
 #
-# If you don't have a signing key set up yet, comment out this whole
-# block or the package-signing task will fail.
-PACKAGE_FEED_SIGN = '1'
+# To enable (only if your fork supports it):
+#   1. Set PACKAGE_FEED_SIGN = '1' below
+#   2. Place your GPG keyring at host ~/dreamos-builds/.gnupg/ (which
+#      appears as /home/builder/.gnupg/ inside the container thanks to
+#      the bind-mount) plus a plain-text passphrase file (chmod 0600)
+#   3. Adjust PACKAGE_FEED_GPG_NAME to your key's fingerprint
+PACKAGE_FEED_SIGN = '0'
 PACKAGE_CLASSES = "package_deb sign_package_feed"
 PACKAGE_FEED_GPG_BACKEND = 'local'
 PACKAGE_FEED_GPG_SIGNATURE_TYPE = 'BIN'
