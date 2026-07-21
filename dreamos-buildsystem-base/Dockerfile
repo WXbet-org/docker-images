@@ -120,6 +120,8 @@ RUN --mount=type=secret,id=pro-attach-config,required=true \
         libtool-bin \
         libusb-1.0-0-dev \
         make \
+        mc \
+        nano \
         openssh-server \
         patch \
         patchelf \
