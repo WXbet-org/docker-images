@@ -1,23 +1,26 @@
 # ---------------------------------------------------------------------
-# dreamos-buildsystem-ubnt18 (release pipeline)
+# dreamos-buildsystem-ubnt18 (release pipeline + test build)
 #
-# One tag, one workflow, one release. Pushing dreamos-buildsystem-ubnt18/vX.Y.Z
-# runs the full pipeline sequentially in one job:
+# Two modes, selected by trigger:
 #
-#   Phase 1: Build the base image (Ubuntu 18.04 + Pro/ESM + toolchain)
-#            and push to ghcr.io/wxbet-org/dreamos-buildsystem-base:vX.Y.Z (+ :latest)
+#   TAG PUSH (dreamos-buildsystem-ubnt18/vX.Y.Z) — full release:
+#     Phase 1: Build the base image (Ubuntu 18.04 + Pro/ESM + toolchain)
+#              and push to ghcr.io/wxbet-org/dreamos-buildsystem-base:vX.Y.Z (+ :latest)
+#     Phase 2: Compose the ubnt18 image on ghcr from the just-built base +
+#              the existing sources image. Uses regctl and OCI cross-repo
+#              blob mount -- no layer blobs downloaded. Pushes to
+#              ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:vX.Y.Z (+ :latest)
 #
-#   Phase 2: Compose the ubnt18 image on ghcr from the just-built base +
-#            the existing sources image. Uses regctl and OCI cross-repo
-#            blob mount -- no layer blobs downloaded. Pushes to
-#            ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:vX.Y.Z (+ :latest)
+#   MANUAL (workflow_dispatch) — base-only sanity check:
+#     Phase 1 runs but `push: false` — the base image is built to
+#     verify Dockerfile / apt / pip / ESM-attach still work, but no
+#     bytes land on GHCR. Phase 2 is skipped entirely. Use this to
+#     iterate on Dockerfile changes without cutting a release or
+#     overwriting :latest.
 #
-# `:latest` on both images is only updated when this tag is the highest
-# sortable dreamos-buildsystem-ubnt18/* tag (guards against late hotfixes
-# on older branches overwriting :latest).
-#
-# For base-only testing (no release), trigger dreamos-buildsystem-base.yml
-# via workflow_dispatch.
+# `:latest` on both images (release mode only) is updated only when
+# this tag is the highest sortable dreamos-buildsystem-ubnt18/* tag
+# (guards against late hotfixes on older branches overwriting :latest).
 # ---------------------------------------------------------------------
 
 name: dreamos-buildsystem-ubnt18
@@ -49,25 +52,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine version and :latest eligibility
+      - name: Determine version, release mode and :latest eligibility
         id: tags
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              # Release mode — publish base + compose ubnt18
+              echo "is_release=1" >> "$GITHUB_OUTPUT"
               VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
               HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
               HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
+              echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+              if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
+                  echo "is_highest=1" >> "$GITHUB_OUTPUT"
+                  echo "Version ${VERSION} is the highest; :latest will be updated on both images."
+              else
+                  echo "is_highest=0" >> "$GITHUB_OUTPUT"
+                  echo "Version ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}); :latest untouched."
+              fi
           else
-              # workflow_dispatch: no tag context, just move :latest
-              VERSION="latest"
-              HIGHEST_VERSION="latest"
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
-              echo "is_highest=1" >> "$GITHUB_OUTPUT"
-              echo "Version ${VERSION} is the highest; :latest will be updated on both images."
-          else
+              # Test mode — build only, no push, no compose
+              echo "is_release=0" >> "$GITHUB_OUTPUT"
+              echo "version=test" >> "$GITHUB_OUTPUT"
               echo "is_highest=0" >> "$GITHUB_OUTPUT"
-              echo "Version ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}); :latest untouched."
+              echo "workflow_dispatch: base-only sanity check — no bytes on GHCR."
           fi
 
       # ================== PHASE 1: build + push base image ==================
@@ -100,8 +107,10 @@ jobs:
         id: base_tags
         run: |
           V="${{ steps.tags.outputs.version }}"
-          if [ "$V" = "latest" ]; then
-              TAG_LIST="${BASE_IMAGE}:latest"
+          if [ "${{ steps.tags.outputs.is_release }}" != "1" ]; then
+              # Test build — tag locally with a throwaway name.
+              # docker/build-push-action requires `tags` even when push=false.
+              TAG_LIST="${BASE_IMAGE}:test-build"
           elif [ "${{ steps.tags.outputs.is_highest }}" = "1" ]; then
               TAG_LIST="${BASE_IMAGE}:${V},${BASE_IMAGE}:latest"
           else
@@ -109,11 +118,11 @@ jobs:
           fi
           echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push base image
+      - name: Build (and, on tag push, push) base image
         uses: docker/build-push-action@v7
         with:
           context: ./${{ env.BASE_DIR }}
-          push: true
+          push: ${{ steps.tags.outputs.is_release == '1' }}
           tags: ${{ steps.base_tags.outputs.tag_list }}
           build-args: |
             IMAGE_COMMIT=${{ github.sha }}
@@ -128,17 +137,22 @@ jobs:
         run: rm -f "${BASE_DIR}/pro-attach-config.yaml"
 
       # ================== PHASE 2: compose + push ubnt18 image ==================
+      # Skipped entirely on workflow_dispatch — nothing to compose from
+      # a base that wasn't pushed.
 
       - name: Install regctl
+        if: steps.tags.outputs.is_release == '1'
         uses: regclient/actions/regctl-installer@main
 
       - name: regctl login to ghcr
+        if: steps.tags.outputs.is_release == '1'
         run: |
           regctl registry login ghcr.io \
               -u "$GITHUB_ACTOR" \
               -p "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Compose ubnt18:${{ steps.tags.outputs.version }}
+        if: steps.tags.outputs.is_release == '1'
         env:
           BASE:    ${{ env.BASE_IMAGE }}:${{ steps.tags.outputs.version }}
           SOURCES: ${{ env.SOURCES_IMAGE }}:latest
@@ -148,7 +162,7 @@ jobs:
           "${UBNT18_DIR}/compose.sh"
 
       - name: Also push ubnt18:latest (if this version is the highest)
-        if: steps.tags.outputs.is_highest == '1' && steps.tags.outputs.version != 'latest'
+        if: steps.tags.outputs.is_release == '1' && steps.tags.outputs.is_highest == '1'
         env:
           BASE:    ${{ env.BASE_IMAGE }}:${{ steps.tags.outputs.version }}
           SOURCES: ${{ env.SOURCES_IMAGE }}:latest

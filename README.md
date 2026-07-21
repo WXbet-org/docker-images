@@ -179,8 +179,8 @@ dreamos-buildsystem-base            dreamos-buildsystem-sources
 │   ├── .dockerignore                  build-context filter
 │   └── docker-compose.yaml            one-liner user deployment
 └── .github/workflows/
-    ├── dreamos-buildsystem-base.yml   Builds base on tag push
-    ├── dreamos-buildsystem-ubnt18.yml Composes ubnt18 on tag push
+    ├── dreamos-buildsystem-ubnt18.yml Builds base + composes ubnt18 on tag push;
+    │                                  workflow_dispatch = base-only sanity check (no push)
     ├── simplebuild4.yml               Builds s4 on repository_dispatch from GitLab
     └── cleanup-ghcr.yml               Weekly prune of orphaned untagged versions
 ```
@@ -189,7 +189,7 @@ dreamos-buildsystem-base            dreamos-buildsystem-sources
 
 | Image | Purpose | How it's built |
 |-------|---------|----------------|
-| [`dreamos-buildsystem-base`](dreamos-buildsystem-base/README.md) | Toolchain only (~2 GB) | CI on `dreamos-buildsystem-base/vX.Y.Z` tag push |
+| [`dreamos-buildsystem-base`](dreamos-buildsystem-base/README.md) | Toolchain only (~2 GB) | CI as phase 1 of a `dreamos-buildsystem-ubnt18/vX.Y.Z` tag push |
 | [`dreamos-buildsystem-sources`](dreamos-buildsystem-sources/README.md) | ~11 GB OE sources snapshot at `/opt/dl-mirror` | Manually on the build server (`./build.sh` in that folder) |
 | [`dreamos-buildsystem-ubnt18`](dreamos-buildsystem-ubnt18/README.md) | Composed (~13 GB) — consumer-facing | CI on `dreamos-buildsystem-ubnt18/vX.Y.Z` tag push (composes base + sources on ghcr) |
 | [`simplebuild4`](simplebuild4/) | s4 cross-compilation build system (~1.5 GB) | CI on `repository_dispatch` from GitLab tag push (see [simplebuild4](#simplebuild4)) |
@@ -214,7 +214,7 @@ The sources image has its own release cadence and is built + tagged manually on 
 
 ### For base-only iteration
 
-If you're tweaking the Dockerfile and just want to test a base build without cutting a release, trigger the `dreamos-buildsystem-base` workflow via **workflow_dispatch** from the Actions tab. It pushes `dreamos-buildsystem-base:latest` only, no ubnt18 composition.
+If you're tweaking the Dockerfile and just want to verify the base still builds, trigger the `dreamos-buildsystem-ubnt18` workflow via **workflow_dispatch** from the Actions tab. Phase 1 runs with `push: false` — the image is built to prove Dockerfile / apt / pip / ESM-attach still work, but no bytes land on GHCR. Phase 2 (ubnt18 composition) is skipped.
 
 ### `:latest` promotion
 
