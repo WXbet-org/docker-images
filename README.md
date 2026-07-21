@@ -98,22 +98,37 @@ cd ~/opendreambox/krogoth   # or ~/opendreambox/pyro, ~/dreamlegacy/{krogoth,pyr
 MACHINE=dm900 make image
 ```
 
-Other useful Make targets:
+Make targets — full breakdown (verified against `opendreambox/pyro/Makefile`):
 
-- `MACHINE=… make image` — full firmware image
-- `MACHINE=… make console-image` — minimal console-only variant
-- `MACHINE=… make rescue-image` — recovery image
+**Image builds** (run `do_rootfs`, produce a flashable firmware image):
+
+- `MACHINE=… make image` — builds `$(MAKE_IMAGE_BB)`, default `dreambox-image`. Same as `make dreambox-image` unless you override, e.g. `MAKE_IMAGE_BB=my-custom-image make image`
+- `MACHINE=… make dreambox-image` — explicit form of the default image build (identical to `make image` with defaults). Full firmware: kernel + rootfs + enigma2 GUI + apps + package feeds
+- `MACHINE=… make console-image` — builds `dreambox-console-image`. Minimal image without GUI, useful for headless testing
+- `MACHINE=… make rescue-image` — builds `dreambox-rescue-image-<MACHINE>` (per-machine variant). Recovery image for reflashing a bricked box
+
+**Single-package builds** (no image, no `do_rootfs`, only `do_package_write_deb` for the named recipe and its dependencies):
+
+- `MACHINE=… make enigma2` — builds just the `enigma2` package. Fast iteration when working on enigma2 alone; the resulting `.deb` lands in `build/<MACHINE>/tmp/deploy/deb/<PACKAGEARCH>/`. Any other recipe name works too — the target `dreambox-image enigma2 package-index: init` in the Makefile is a generic shortcut for `bitbake <recipe>`
+- `MACHINE=… make package-index` — regenerate `Packages` / `Release` feed indexes for `tmp/deploy/deb/` (with signatures if signing is on). **Not** normally needed: `make image` already writes these as part of `do_rootfs` (via `oe.rootfs.DpkgRootfs._create → pm.write_index()`). Useful only when you've built individual packages with `make <pkg>` / `bitbake <pkg>` and want the feed refreshed without a full image rebuild — see [Hosting your own package feed](#hosting-your-own-package-feed)
+
+**House-keeping:**
+
 - `MACHINE=… make download` — pre-fetch of all sources for the target (shakes out network / mirror issues before the long build starts)
 - `make update` — refresh the SDK (submodules) after upstream changes
-- `make help` — the authoritative list, plus your current settings
+- `make clean` / `make distclean` — remove generated config files (does *not* touch `build/`)
+- `make sstate-cache-clean` — prune the shared-state cache (per-machine, keeps only live stamps)
+- `make help` — authoritative on-screen reference plus your current settings
 
-For manual bitbake invocation of a single recipe:
+For manual bitbake invocation without going through make:
 
 ```sh
-cd build/dm900
+cd build/<MACHINE>
 source bitbake.env
-bitbake enigma2   # or any other recipe
+bitbake <recipe>   # e.g. enigma2, dreambox-image, package-index, ...
 ```
+
+`make <name>` is just a shortcut for that — same result, less typing, and it takes care of the `MACHINE=…` prefix and the `bitbake.env` sourcing.
 
 **Machine matrix** (which BuildEnv branch supports which target):
 
@@ -156,6 +171,26 @@ swap=8GB
 ```
 
 Then `wsl --shutdown` and restart. With ≥16 GB you can leave the auto-detected caps alone.
+
+### Package feed URL — release channel and distro version
+
+The feed URL that ends up on the receiver's `/etc/apt/sources.list.d/*.list` (dreambox is Debian-based → apt/dpkg, not opkg) is composed at build time from:
+
+```sh
+DISTRO_FEED_URI = "https://<host>/opendreambox/<distro-version>/<channel>/${PR}/${MACHINE}"
+```
+
+Two parameters are exposed in `conf/local-ext.conf`:
+
+- **`DISTRO_FEED_CHANNEL`** — free-form path segment. `bootstrap-buildenv` writes it as `"unstable"` (sensible default for day-to-day work). Flip to `"stable"` when you're cutting a release build:
+    ```sh
+    DISTRO_FEED_CHANNEL = "stable"
+    ```
+- **`<distro-version>`** — coupled to the OE release branch. `bootstrap-buildenv` substitutes it at write time (`krogoth → 2.5`, `pyro → 2.6`), so a fresh `local-ext.conf` already has the correct value. If you need to change it later, edit the URL directly.
+
+Bitbake variables `${PR}` and `${MACHINE}` are expanded by bitbake at package-build time — leave them literal in the config file.
+
+To point the receiver at your own feed, replace the host in the URL and follow **Hosting your own package feed** below.
 
 ### Package feed signing
 
@@ -238,6 +273,39 @@ gpg --delete-keys        <FINGERPRINT>   # then the public half
 ```
 
 After rotation don't forget to update `PACKAGE_FEED_GPG_NAME` in each BuildEnv's `conf/local-ext.conf` and re-distribute the new public key to feed consumers.
+
+### Hosting your own package feed
+
+After `MACHINE=xxx make image`, all package artefacts land locally in the BuildEnv:
+
+```
+build/<MACHINE>/tmp/deploy/deb/          <- one subdir per PACKAGEARCH
+                          ├── all/
+                          ├── <MACHINE>/
+                          ├── cortexa15hf-neon-vfpv4/
+                          └── ...
+```
+
+A "feed" is nothing more than that directory tree served over HTTP(S) plus generated index files (`Packages`, `Packages.gz`, `Release`) per architecture directory. The receiver's `apt` fetches those indexes from `${DISTRO_FEED_URI}` and installs `.deb` files listed in them (dreambox is Debian-based → apt/dpkg on the receiver, not opkg).
+
+Minimal setup:
+
+1. **Feed indexes** (`Packages` / `Packages.gz` / `Release` + `Release.gpg` when signing is on) are written **automatically** as part of `make image`. Specifically, `do_rootfs` in [`oe/rootfs.py:650`](https://git.openembedded.org/openembedded-core/tree/meta/lib/oe/rootfs.py?h=pyro) calls `pm.write_index()` on the DEB package manager, which invokes the `DpkgIndexer` — the same code path that `bitbake package-index` runs — over the entire `tmp/deploy/deb/` tree. So after `make image`, the feed is already index-ready on disk.
+
+    You only need `MACHINE=<machine> make package-index` explicitly when you built individual packages with `bitbake <pkg>` (no `do_rootfs` → no auto-refresh) and want the indexes updated without a full image rebuild.
+2. **Publish** the entire `tmp/deploy/deb/` tree over HTTP — nginx / apache / caddy / any static file server does the job. Match the URL layout to `DISTRO_FEED_URI`, so `<host>/opendreambox/2.6/unstable/<PR>/<MACHINE>/` resolves to the corresponding `deploy/deb/<PACKAGEARCH>/` directory (a bit of `rewrite` / symlink glue is usually needed — every host layouts this differently).
+3. **Point `DISTRO_FEED_URI`** at your host, rebuild the image, install → the receiver's `/etc/apt/sources.list.d/*.list` now references your URL.
+4. **If signing is enabled**: distribute the public key (`gpg --armor --export > pubkey.asc`) to receivers. On the STB: `apt-key add pubkey.asc` (or bake the key into the image via a custom recipe by dropping the armored key into `/etc/apt/trusted.gpg.d/`).
+
+Common workflow after each image build:
+
+```sh
+MACHINE=dm900 make image
+# Feed indexes are already written under build/dm900/tmp/deploy/deb/
+rsync -a build/dm900/tmp/deploy/deb/ user@feedhost:/var/www/opendreambox/2.6/unstable/
+```
+
+Deeper background from the Yocto Project reference manual (same mechanism, all OE-based distros): <https://docs.yoctoproject.org/dev-manual/packages.html#creating-and-using-a-package-feed>.
 
 Deep-dive documentation (Dockerfile internals, PREMIRRORS setup, the two-image split): [`dreamos-buildsystem-ubnt18/README.md`](dreamos-buildsystem-ubnt18/README.md).
 

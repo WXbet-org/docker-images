@@ -151,9 +151,17 @@ OSCAMPORT = "8888"
 
 # ================== PACKAGE FEED ==================
 
-# The "2.6" is the opendreambox distro version. If you build a BuildEnv
-# whose distro is a different release, edit this line accordingly.
-DISTRO_FEED_URI = "https://dreamboxupdate.com/opendreambox/2.6/unstable/${PR}/${MACHINE}"
+# Distro version is coupled to the OE release branch:
+#   krogoth -> opendreambox 2.5
+#   pyro    -> opendreambox 2.6
+# bootstrap-buildenv substitutes @DISTRO_VERSION@ per branch when it
+# writes this file. Change the URL host if you host your own feed.
+#
+# DISTRO_FEED_CHANNEL is a plain string ("unstable" | "stable" | ...)
+# that becomes a path segment in the feed URL. Flip it to "stable" for
+# release builds; "unstable" is the sensible default for day-to-day work.
+DISTRO_FEED_CHANNEL ?= "unstable"
+DISTRO_FEED_URI      = "https://dreamboxupdate.com/opendreambox/@DISTRO_VERSION@/${DISTRO_FEED_CHANNEL}/${PR}/${MACHINE}"
 
 
 # ================== PACKAGE SIGNING ==================
@@ -221,6 +229,14 @@ LOCALEXT
     if [ -n "$GPG_FINGERPRINT" ]; then
         sed -i "s|@GPG_FINGERPRINT@|$GPG_FINGERPRINT|" conf/local-ext.conf
     fi
+
+    # Map OE release branch -> opendreambox distro version for DISTRO_FEED_URI.
+    # Only pyro is 2.6; krogoth and any other/unknown branch default to 2.5.
+    case "$branch" in
+        pyro) distro_version="2.6" ;;
+        *)    distro_version="2.5" ;;
+    esac
+    sed -i "s|@DISTRO_VERSION@|$distro_version|" conf/local-ext.conf
 
     # On the opendreambox fork (WXbet) DEB feed signing actually works,
     # so uncomment the PACKAGE SIGNING block by default. dreamlegacy
