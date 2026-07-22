@@ -1,0 +1,89 @@
+# dreamos-buildsystem-ubnt18 — named-volume variant.
+#
+# BuildEnv checkouts and the shared sources pool live in a Docker-managed
+# named volume. This compose is fully host-agnostic: no $HOME assumption,
+# no host-path setup, no chown fiddling. Same file works identically on
+# any Docker host, no environment variables required.
+#
+# Downside vs the bind-mount variant: no direct host-side browsing of the
+# BuildEnv trees. Use `docker compose exec` or SSH into the container to
+# poke files, or `docker cp` for one-off transfers.
+#
+# For direct host-side access to ~/dreamos-builds/, use
+# docker-compose.mount.yaml instead.
+#
+# Usage:
+#   docker compose -f docker-compose.volume.yaml up -d
+#
+# Access:
+#   ssh -p 2222 builder@localhost          # login as builder / builder
+#   docker compose -f docker-compose.volume.yaml exec dreamos-buildsystem bash
+#
+# Environment overrides (via .env, shell, or the deploying tool's env):
+#   TAG=v0.4.0          # pin a specific image tag (default: latest)
+#   SSH_PORT=2323       # publish sshd on a different host port
+#   AUTO_BOOTSTRAP=0    # skip the first-run 4-BuildEnv auto-bootstrap
+#
+# Migrate an existing bind-mount (~/dreamos-builds) into the named volume
+# (run before `docker compose up -d` the first time). The volume name
+# takes the project prefix from the containing directory; adjust it if
+# you deploy this compose under a different project name:
+#   docker volume create dreamos-buildsystem-ubnt18_dreamos_builds
+#   docker run --rm \
+#       -v "$HOME/dreamos-builds:/from" \
+#       -v dreamos-buildsystem-ubnt18_dreamos_builds:/to \
+#       alpine ash -c 'cp -a /from/. /to/'
+#
+# Back up the volume to a tarball:
+#   docker run --rm \
+#       -v dreamos-buildsystem-ubnt18_dreamos_builds:/data:ro \
+#       -v "$PWD":/backup \
+#       alpine tar czf /backup/dreamos-builds-backup.tgz -C /data .
+
+services:
+  dreamos-buildsystem:
+    image: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:${TAG:-latest}
+    container_name: dreamos-buildsystem
+    hostname: dreamos-buildsystem
+
+    ports:
+      # sshd is started by the entrypoint; port 22 inside -> host SSH_PORT
+      - "${SSH_PORT:-2222}:22"
+
+    volumes:
+      # Docker-managed named volume -- portable, no host-path assumptions.
+      # Stored in the Docker daemon's own filesystem, no cross-boundary
+      # I/O overhead.
+      - dreamos_builds:/home/builder
+
+    environment:
+      # First container start auto-clones the 4 standard BuildEnvs
+      # (opendreambox/{krogoth,pyro}, dreamlegacy/{krogoth,pyro}).
+      # Set to 0 to skip and bootstrap manually later.
+      AUTO_BOOTSTRAP: "${AUTO_BOOTSTRAP:-1}"
+      # Forward terminal capabilities so the MOTD renders in 256/truecolor
+      # instead of falling back to Docker's default TERM=xterm.
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
+
+    # The image's entrypoint daemonizes sshd in the background, then
+    # exec's this command as PID 1. `sleep infinity` keeps the container
+    # alive without CPU cost; work happens over SSH or `docker exec`.
+    command: ["sleep", "infinity"]
+
+    restart: unless-stopped
+
+    # Bitbake spawns many processes; the default 1024 open-file limit is
+    # too tight for larger BuildEnvs (esp. qtwebkit / linker phases).
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+volumes:
+  # Named volume backing /home/builder. Docker stores it under
+  # /var/lib/docker/volumes/<project>_dreamos_builds/_data/. The
+  # <project>_ prefix is only added when this compose is launched as a
+  # project (`docker compose ...`); a raw `docker run --volume
+  # dreamos_builds:...` uses the bare name.
+  dreamos_builds:

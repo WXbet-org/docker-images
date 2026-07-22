@@ -1,0 +1,70 @@
+# dreamos-buildsystem-ubnt18 — bind-mount variant.
+#
+# Use this compose when you want the BuildEnv trees directly accessible
+# on the host at ~/dreamos-builds/ (or a custom path) -- convenient for
+# poking at conf/local-ext.conf, browsing tmp/deploy/deb, or restoring
+# from a manual rsync backup without a helper container.
+#
+# For a portable, host-agnostic setup that stores everything inside a
+# Docker-managed volume instead, use docker-compose.volume.yaml.
+#
+# Usage:
+#   mkdir -p ~/dreamos-builds
+#   docker compose -f docker-compose.mount.yaml up -d
+#
+# Access:
+#   ssh -p 2222 builder@localhost          # login as builder / builder
+#   docker compose -f docker-compose.mount.yaml exec dreamos-buildsystem bash
+#
+# Environment overrides (via .env, shell, or the deploying tool's env):
+#   TAG=v0.4.0          # pin a specific image tag (default: latest)
+#   SSH_PORT=2323       # publish sshd on a different host port
+#   AUTO_BOOTSTRAP=0    # skip the first-run 4-BuildEnv auto-bootstrap
+#   HOME=/home/wxbet    # host $HOME. Must be set explicitly whenever
+#                       # this compose is not launched from an
+#                       # interactive shell under the target user (any
+#                       # daemon, service, or non-interactive deploy).
+#   BUILDS_DIR=/mnt/nvme/dreamos-builds
+#                       # optional: override the on-host location entirely
+#                       # (default: ${HOME}/dreamos-builds).
+
+services:
+  dreamos-buildsystem:
+    image: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:${TAG:-latest}
+    container_name: dreamos-buildsystem
+    hostname: dreamos-buildsystem
+
+    ports:
+      # sshd is started by the entrypoint; port 22 inside -> host SSH_PORT
+      - "${SSH_PORT:-2222}:22"
+
+    volumes:
+      # Host path appears as the builder user's home inside the container.
+      # All BuildEnv checkouts + shared sources pool live here and persist
+      # across container restarts. Host UID/GID should be 1000:1000 for
+      # ownership to match (matches the image's `builder` user).
+      - "${BUILDS_DIR:-${HOME}/dreamos-builds}:/home/builder"
+
+    environment:
+      # First container start auto-clones the 4 standard BuildEnvs
+      # (opendreambox/{krogoth,pyro}, dreamlegacy/{krogoth,pyro}).
+      # Set to 0 to skip and bootstrap manually later.
+      AUTO_BOOTSTRAP: "${AUTO_BOOTSTRAP:-1}"
+      # Forward terminal capabilities so the MOTD renders in 256/truecolor
+      # instead of falling back to Docker's default TERM=xterm.
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
+
+    # The image's entrypoint daemonizes sshd in the background, then
+    # exec's this command as PID 1. `sleep infinity` keeps the container
+    # alive without CPU cost; work happens over SSH or `docker exec`.
+    command: ["sleep", "infinity"]
+
+    restart: unless-stopped
+
+    # Bitbake spawns many processes; the default 1024 open-file limit is
+    # too tight for larger BuildEnvs (esp. qtwebkit / linker phases).
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
