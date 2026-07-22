@@ -1,0 +1,70 @@
+# SimpleBuild4 — named-volume variant.
+#
+# The s4 data directory lives in a Docker-managed named volume. This
+# compose is fully host-agnostic: no $HOME assumption, no host-path
+# setup, no chown fiddling. Same file works identically on any Docker
+# host, no environment variables required.
+#
+# Downside vs the bind-mount variant: no direct host-side browsing of
+# the data files. Use `docker compose exec` or `docker cp` for transfers.
+#
+# For direct host-side access to ~/s4-data/, use
+# docker-compose.mount.yaml instead.
+#
+# Usage:
+#   docker compose -f docker-compose.volume.yaml up -d          # web + mcp detached
+#   docker compose -f docker-compose.volume.yaml logs -f        # follow logs
+#   docker compose -f docker-compose.volume.yaml down           # stop + remove
+#
+# Interactive TUI:
+#   docker compose -f docker-compose.volume.yaml run --rm s4 s4
+#
+# Environment overrides (via .env, shell, or the deploying tool's env):
+#   S4_TAG=2026.04.488   # pin a specific image tag (default: latest)
+#
+# Migrate an existing bind-mount (~/s4-data) into the named volume
+# (run before `docker compose up -d` the first time). The volume name
+# takes the project prefix from the containing directory; adjust it if
+# you deploy this compose under a different project name:
+#   docker volume create simplebuild4_s4_data
+#   docker run --rm \
+#       -v "$HOME/s4-data:/from" \
+#       -v simplebuild4_s4_data:/to \
+#       alpine ash -c 'cp -a /from/. /to/'
+#
+# Back up the volume to a tarball:
+#   docker run --rm \
+#       -v simplebuild4_s4_data:/data:ro \
+#       -v "$PWD":/backup \
+#       alpine tar czf /backup/s4-data-backup.tgz -C /data .
+
+services:
+  s4:
+    image: ghcr.io/wxbet-org/simplebuild4:${S4_TAG:-latest}
+    container_name: s4
+    ports:
+      - "8080:8080"    # Web-TUI (textual-serve)
+      - "8181:8181"    # MCP (streamable HTTP)
+      - "6274:6274"    # MCP Inspector — client UI (only while running)
+      - "6277:6277"    # MCP Inspector — proxy server
+    volumes:
+      # Docker-managed named volume -- portable, no host-path assumptions.
+      # Stored in the Docker daemon's own filesystem, no cross-boundary
+      # I/O overhead. Container entrypoint auto-drops to a fixed uid
+      # (typically 1000) inside the volume, no host-uid mapping needed.
+      - s4_data:/app/data
+    # Propagate host terminal capabilities so Textual gets 256/truecolor
+    # instead of docker's default TERM=xterm (16-color fallback → wrong
+    # theme rendering).
+    environment:
+      - TERM
+      - COLORTERM
+    restart: unless-stopped
+
+volumes:
+  # Named volume backing /app/data. Docker stores it under
+  # /var/lib/docker/volumes/<project>_s4_data/_data/. The <project>_
+  # prefix is only added when this compose is launched as a project
+  # (`docker compose ...`); a raw `docker run --volume s4_data:...`
+  # uses the bare name.
+  s4_data:

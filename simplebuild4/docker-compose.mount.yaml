@@ -1,0 +1,50 @@
+# SimpleBuild4 — bind-mount variant.
+#
+# Use this compose when you want the s4 data directory directly
+# accessible on the host at ~/s4-data/ (or a custom path) -- convenient
+# for browsing/backing up config files, DB dumps, or output artefacts
+# with the host's normal tools.
+#
+# For a portable, host-agnostic setup that stores everything inside a
+# Docker-managed volume instead, use docker-compose.volume.yaml.
+#
+# Usage:
+#   mkdir -p ~/s4-data
+#   docker compose -f docker-compose.mount.yaml up -d          # web + mcp detached
+#   docker compose -f docker-compose.mount.yaml logs -f        # follow logs
+#   docker compose -f docker-compose.mount.yaml down           # stop + remove
+#
+# Interactive TUI:
+#   docker compose -f docker-compose.mount.yaml run --rm s4 s4
+#
+# Environment overrides (via .env, shell, or the deploying tool's env):
+#   S4_TAG=2026.04.488   # pin a specific image tag (default: latest)
+#   HOME=/home/wxbet     # host $HOME. Must be set explicitly whenever
+#                        # this compose is not launched from an
+#                        # interactive shell under the target user (any
+#                        # daemon, service, or non-interactive deploy).
+#   S4_DATA_DIR=/mnt/nvme/s4-data
+#                        # optional: override the on-host location
+#                        # entirely (default: ${HOME}/s4-data).
+
+services:
+  s4:
+    image: ghcr.io/wxbet-org/simplebuild4:${S4_TAG:-latest}
+    container_name: s4
+    ports:
+      - "8080:8080"    # Web-TUI (textual-serve)
+      - "8181:8181"    # MCP (streamable HTTP)
+      - "6274:6274"    # MCP Inspector — client UI (only while running)
+      - "6277:6277"    # MCP Inspector — proxy server
+    volumes:
+      # Host path appears at /app/data inside the container. The entry
+      # point auto-detects the mount owner and drops root -> that uid,
+      # so host-side files stay owned by you.
+      - "${S4_DATA_DIR:-${HOME}/s4-data}:/app/data"
+    # Propagate host terminal capabilities so Textual gets 256/truecolor
+    # instead of docker's default TERM=xterm (16-color fallback → wrong
+    # theme rendering).
+    environment:
+      - TERM
+      - COLORTERM
+    restart: unless-stopped
