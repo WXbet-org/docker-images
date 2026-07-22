@@ -13,14 +13,56 @@ On Debian / Ubuntu:
 
 ```sh
 sudo apt update
-sudo apt install -y docker.io
+sudo apt install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
 sudo usermod -aG docker $USER    # so `docker` works without sudo
 newgrp docker                    # activate the group in the current shell
 ```
 
-The distribution's `docker.io` package is enough for **running** these images (Docker 18.09+ pulls and runs OCI-compliant manifests). If your distro is very old and the pull fails, install Docker CE from Docker's official repo: <https://docs.docker.com/engine/install/>.
+Two packages suffice for running these images: `docker.io` is the daemon and CLI, `docker-compose-v2` provides the modern `docker compose ...` subcommand (needed for the compose files under [`dreamos-buildsystem-ubnt18/`](dreamos-buildsystem-ubnt18/)). Everything sits in the standard Ubuntu repo — no third-party PPA required.
+
+If you also want to *build* multi-arch container images on this host (not needed for consuming what's already on ghcr), add `docker-buildx` to the apt line.
+
+If your distro is very old and the pull in step 2 fails, install Docker CE from Docker's official repo instead: <https://docs.docker.com/engine/install/>.
 
 On Windows or macOS: install Docker Desktop and skip to step 2.
+
+#### 1a. Recommended: log rotation
+
+Docker's default JSON log driver never rotates or truncates container logs — a chatty long-running container will happily fill your disk over weeks/months. Set a sane cap once for all containers:
+
+```sh
+sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "5"
+  }
+}
+EOF
+sudo systemctl restart docker
+```
+
+Each container is now allowed 5 × 50 MB = 250 MB of history, older lines rotate out. Applies to every container going forward. Existing containers need a restart (`docker restart <name>`) to pick up the new driver.
+
+#### 1b. Optional: Portainer for a web UI
+
+If you'd rather manage the container (and any others) from a browser instead of the CLI, drop Portainer CE on the same host:
+
+```sh
+docker volume create portainer_data
+docker run -d \
+    --name portainer \
+    --restart=unless-stopped \
+    -p 9443:9443 \
+    -p 8000:8000 \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v portainer_data:/data \
+    portainer/portainer-ce:latest
+```
+
+Then open `https://<host>:9443` and create the initial admin account. Port `9443` is the UI, port `8000` is for remote Edge-Agents — leave it out if you only manage this host locally. Portainer picks up the local Docker daemon via the socket mount and lets you deploy the two [compose files under `dreamos-buildsystem-ubnt18/`](dreamos-buildsystem-ubnt18/) as *Stacks* directly from this Git repo. See [Long-running deployment](#3c-long-running-deployment-composestack) below.
 
 ### 2. Pull the build image
 
@@ -77,6 +119,34 @@ docker stop dreamos-builder && docker rm dreamos-builder
 ```
 
 `docker exec` shells survive Ctrl+D — the container keeps running until you `docker stop` it.
+
+#### 3c. Long-running deployment (compose/stack)
+
+For a service-style deployment that survives host reboots, comes back after Docker restart, and is easy to redeploy from Git, two ready-made compose files ship under [`dreamos-buildsystem-ubnt18/`](dreamos-buildsystem-ubnt18/):
+
+- **[`docker-compose.mount.yaml`](dreamos-buildsystem-ubnt18/docker-compose.mount.yaml)** — bind-mounts host `$HOME/dreamos-builds` (or a custom `BUILDS_DIR`) into `/home/builder`. Best when you want to edit `local-ext.conf` etc. directly from the host. Requires `HOME=<your-home>` as an env var whenever the compose is not launched from your interactive shell (e.g. from a UI or a daemon).
+- **[`docker-compose.volume.yaml`](dreamos-buildsystem-ubnt18/docker-compose.volume.yaml)** — puts `/home/builder` on a Docker-managed named volume. Host-agnostic, no env vars needed, portable across hosts. Trade-off: no direct host-side browsing of the BuildEnv trees (only via `docker compose exec` or SSH).
+
+CLI usage:
+
+```sh
+# Pick one:
+docker compose -f dreamos-buildsystem-ubnt18/docker-compose.mount.yaml  up -d
+docker compose -f dreamos-buildsystem-ubnt18/docker-compose.volume.yaml up -d
+
+# Access
+ssh -p 2222 builder@localhost                   # sshd is up as usual
+docker compose -f <file> exec dreamos-buildsystem bash
+```
+
+Both files set `restart: unless-stopped`, so the container comes back automatically after Docker restarts. The first container start still runs the same [auto-bootstrap](#first-start-auto-bootstrap) as the plain `docker run` variant.
+
+If you use Portainer (installed in [step 1b](#1b-optional-portainer-for-a-web-ui)), deploy either file as a **Stack → Repository**:
+
+- Repository URL: `https://github.com/WXbet-org/docker-images`
+- Repository reference: `refs/heads/master`
+- Compose path: `dreamos-buildsystem-ubnt18/docker-compose.mount.yaml` (or `.volume.yaml`)
+- Env vars: `HOME=/home/<youruser>` for the mount variant; leave empty for the volume variant
 
 #### Flags explained
 
