@@ -62,7 +62,22 @@ docker run -d \
     portainer/portainer-ce:latest
 ```
 
-Then open `https://<host>:9443` and create the initial admin account. Port `9443` is the UI, port `8000` is for remote Edge-Agents — leave it out if you only manage this host locally. Portainer picks up the local Docker daemon via the socket mount and lets you deploy the two [compose files under `dreamos-buildsystem-ubnt18/`](dreamos-buildsystem-ubnt18/) as *Stacks* directly from this Git repo. See [Long-running deployment](#3c-long-running-deployment-composestack) below.
+Then open `https://<host>:9443` in your browser and create the initial admin account.
+
+**Two Portainer gotchas at first launch:**
+
+1. **5-minute setup window.** Portainer locks the initial-admin form 5 minutes after the container starts, to prevent someone else on the network from claiming admin if you set it up and forgot. If you missed the window, the UI will tell you — restart the container to open a fresh window:
+    ```sh
+    docker restart portainer
+    ```
+    Then open the URL again within 5 minutes.
+2. **Setup token for non-local setup.** If you open the setup URL from a machine that is *not* the Docker host itself (i.e. not `localhost` / `127.0.0.1` / `[::1]`), Portainer additionally demands a one-time setup token. It's printed to the container logs at startup:
+    ```sh
+    docker logs portainer 2>&1 | grep -i 'setup_token'
+    ```
+    Paste the token into the field in the browser and continue with admin creation. Local access from the same host doesn't need the token. If the grep returns nothing, restart the container to trigger a fresh token: `docker restart portainer && sleep 3 && docker logs portainer 2>&1 | grep -i 'setup_token'`.
+
+Port `9443` is the UI, port `8000` is for remote Edge-Agents — leave it out if you only manage this host locally. Portainer picks up the local Docker daemon via the socket mount and lets you deploy the two [compose files under `dreamos-buildsystem-ubnt18/`](dreamos-buildsystem-ubnt18/) as *Stacks* directly from this Git repo. See [Long-running deployment](#3c-long-running-deployment-composestack) below.
 
 ### 2. Pull the build image
 
