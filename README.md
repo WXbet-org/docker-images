@@ -163,6 +163,50 @@ If you use Portainer (installed in [step 1b](#1b-optional-portainer-for-a-web-ui
 - Compose path: `dreamos-buildsystem-ubnt18/docker-compose.mount.yaml` (or `.volume.yaml`)
 - Env vars: `HOME=/home/<youruser>` for the mount variant; leave empty for the volume variant
 
+#### 3d. One-shot batch build (CI-style)
+
+For "run to completion, capture the exit code" workloads — CI pipelines, mass-builds across several MACHINEs on a beefy host, or any orchestrator flow where you want the full bitbake output streaming into the log view instead of trapped in an interactive shell — two ready-made compose files ship under [`dreamos-buildsystem-ubnt18/`](dreamos-buildsystem-ubnt18/), mirroring the mount/volume split of the long-running variants:
+
+- **[`docker-compose.build.mount.yaml`](dreamos-buildsystem-ubnt18/docker-compose.build.mount.yaml)** — bind-mounts host `$HOME/dreamos-builds` (or `$BUILDS_DIR`) into `/home/builder`. Best when you want to poke at `tmp-glibc/log/...` or `deploy/images/...` on the host between runs with normal tools. Requires `HOME=<your-home>` as an env var whenever launched non-interactively.
+- **[`docker-compose.build.volume.yaml`](dreamos-buildsystem-ubnt18/docker-compose.build.volume.yaml)** — backs `/home/builder` with a Docker-managed named volume (`dreamos_build_data`). Host-agnostic, no env vars required. Trade-off: no direct host-side browsing (use `docker cp` or a Filebrowser container against the same volume).
+
+Key behavior common to both (differences vs 3c):
+
+- **`make image` runs as PID 1** → all bitbake output goes to `docker logs`, visible live in any log viewer (Komodo Log tab, `docker logs -f`, Portainer, …)
+- **`restart: "no"`** → container exits when the build is done; exit code = build result (0 = all OK, 1 = at least one MACHINE failed)
+- **`AUTO_BOOTSTRAP=0`** + explicit `bootstrap-buildenv` for only the one BuildEnv the batch needs → saves ~15 min vs bootstrapping all four
+- **Per-machine failures don't abort the batch** — the loop collects failures and returns non-zero at the end with a summary of which MACHINEs failed, plus each failing bitbake task's log path. The summary is grepped from the newest cooker console log under `build/<machine>/tmp-glibc/log/cooker/<machine>/` (files are timestamped `YYYYMMDDHHMMSS.log`; the batch picks the newest by mtime).
+- **Runs as user `builder`** (uid 1000) — inherited from the image's `USER` directive. Bitbake refuses to run as root anyway. Only entrypoint-side sshd startup goes through passwordless `sudo`.
+- **SSH published** on `${SSH_PORT:-2222}` (same pattern as the long-running variants) so you can peek at a running build. Each fresh container generates a new host key, so use `-o StrictHostKeyChecking=no` on the client or clear the entry from `known_hosts` between runs.
+
+Env vars (all optional except `HOME` for the mount variant when non-interactive):
+
+| Var | Default | Meaning |
+|---|---|---|
+| `TAG` | `latest` | Image version pin |
+| `FORK` | `opendreambox` | `opendreambox` or `dreamlegacy` |
+| `BRANCH` | `krogoth` | any branch of the fork |
+| `MACHINES` | `dm900` | space-separated list, e.g. `"dm520 dm820 dm7080 dm900 dm920"` |
+| `SSH_PORT` | `2222` | host port for optional SSH peek access |
+| `HOME` / `BUILDS_DIR` | `$HOME/dreamos-builds` | mount variant only |
+
+CLI usage:
+
+```sh
+# Pick one:
+docker compose -f dreamos-buildsystem-ubnt18/docker-compose.build.mount.yaml  up
+docker compose -f dreamos-buildsystem-ubnt18/docker-compose.build.volume.yaml up
+
+# Several MACHINEs at once (sequential inside the container)
+MACHINES="dm520 dm820 dm7080 dm900 dm920" docker compose -f dreamos-buildsystem-ubnt18/docker-compose.build.volume.yaml up
+
+# Detached + follow log
+docker compose -f dreamos-buildsystem-ubnt18/docker-compose.build.volume.yaml up -d
+docker compose -f dreamos-buildsystem-ubnt18/docker-compose.build.volume.yaml logs -f
+```
+
+Portainer/Komodo deploy: as a **Stack → Repository** pointing at whichever compose path, set `MACHINES=…` (and `HOME=/home/<user>` for the mount variant) in the stack env vars, deploy, watch the log tab. To rebuild: redeploy the stack (or just `docker compose up` again).
+
 #### Flags explained
 
 - `-v ~/dreamos-builds:/home/builder` bind-mounts a host folder as the `builder` user's home. Everything the builder does (BuildEnv checkouts, downloaded sources, GPG keyring, `.bash_history`, …) persists across container restarts.

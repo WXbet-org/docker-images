@@ -1,0 +1,148 @@
+# dreamos-buildsystem-ubnt18 — one-shot CI-style build, bind-mount variant.
+#
+# Same behavior as docker-compose.build.volume.yaml -- container starts,
+# bootstraps the requested BuildEnv, runs `make image` sequentially over
+# MACHINES, then exits with 0 on success or 1 on at least one failure --
+# but bind-mounts the host's dreamos-builds directory into /home/builder
+# instead of using a Docker-managed named volume. Handy when you want to
+# poke at tmp-glibc/log/cooker/... or deploy/images/... directly from the
+# host with normal tools (nano, rsync, etc.) between runs.
+#
+# For a portable, host-agnostic setup (no host path, no HOME env var)
+# use docker-compose.build.volume.yaml instead.
+#
+# Usage:
+#   mkdir -p ~/dreamos-builds
+#   docker compose -f docker-compose.build.mount.yaml up            # foreground
+#   docker compose -f docker-compose.build.mount.yaml up -d         # detached, watch with `logs -f`
+#   docker compose -f docker-compose.build.mount.yaml logs -f       # follow log stream
+#
+# Environment overrides (via .env, shell, or the deploying tool):
+#   TAG=v0.4.0                   # pin the base image (default: latest)
+#   FORK=opendreambox            # or dreamlegacy               (default: opendreambox)
+#   BRANCH=krogoth               # any branch of the fork       (default: krogoth)
+#   MACHINES="dm900 dm920"       # space-separated list         (default: dm900)
+#   HOME=/home/wxbet             # host $HOME. Must be set explicitly
+#                                # whenever this compose is not launched
+#                                # from your interactive shell (any
+#                                # daemon, service, or non-interactive
+#                                # deploy).
+#   BUILDS_DIR=/mnt/nvme/dreamos-builds
+#                                # optional: override the on-host location
+#                                # entirely (default: ${HOME}/dreamos-builds).
+
+services:
+  dreamos-build:
+    image: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:${TAG:-latest}
+    container_name: dreamos-build
+    hostname: dreamos-build
+
+    ports:
+      # sshd is started by the entrypoint; port 22 inside -> host SSH_PORT.
+      # Every fresh container generates a new host key, so add
+      # `-o StrictHostKeyChecking=no` on the client or clear known_hosts
+      # between runs. Not needed for the batch to work -- purely optional
+      # peek access at a running build.
+      - "${SSH_PORT:-2222}:22"
+
+    volumes:
+      # Host path appears as the builder user's home inside the container.
+      # All BuildEnv checkouts + shared sources pool live here and persist
+      # across container restarts. Host UID/GID should be 1000:1000 for
+      # ownership to match (matches the image's `builder` user).
+      - "${BUILDS_DIR:-${HOME}/dreamos-builds}:/home/builder"
+
+    environment:
+      FORK: "${FORK:-opendreambox}"
+      BRANCH: "${BRANCH:-krogoth}"
+      MACHINES: "${MACHINES:-dm900}"
+      # Skip the default four-BuildEnv auto-bootstrap; the command below
+      # bootstraps only the single BuildEnv we actually need for this build.
+      AUTO_BOOTSTRAP: "0"
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
+
+    # The entrypoint (SSH setup + optional auto-bootstrap) runs first,
+    # then execs this command as PID 1. Its stdout/stderr become the
+    # container's log stream -- visible live in any Docker log viewer.
+    # Every `$` in the shell script below is written as `$$` so Docker
+    # Compose does NOT eat it at yaml-parse time. Compose replaces `$$`
+    # with `$` when handing the command to the container; bash then
+    # expands the real env vars (FORK/BRANCH/MACHINES from `environment:`
+    # above, plus loop-local `M` and `FAILED`) at runtime.
+    command:
+      - /bin/bash
+      - -euo
+      - pipefail
+      - -c
+      - |
+        echo "===================================================="
+        echo "  dreamos-build: $${FORK} / $${BRANCH}"
+        echo "  MACHINES: $${MACHINES}"
+        echo "===================================================="
+        # Idempotent: fast if the BuildEnv already exists.
+        bootstrap-buildenv "$${FORK}" "$${BRANCH}"
+        cd "/home/builder/$${FORK}/$${BRANCH}"
+        FAILED=""
+        FAIL_REPORT=""
+        for M in $${MACHINES}; do
+            echo
+            echo "===================================================="
+            echo "  START  MACHINE=$${M}"
+            echo "===================================================="
+            if MACHINE="$${M}" make image; then
+                echo "===================================================="
+                echo "  OK    MACHINE=$${M}"
+                echo "===================================================="
+            else
+                RC=$${?}
+                echo "===================================================="
+                echo "  FAIL  MACHINE=$${M} (rc=$${RC})"
+                echo "===================================================="
+                FAILED="$${FAILED} $${M}"
+                # bitbake writes its own console logs (with all ERROR
+                # markers + failing-task log paths) into
+                #   build/<machine>/tmp-glibc/log/cooker/<machine>/
+                # Filenames are timestamped (YYYYMMDDHHMMSS.log); pick
+                # the newest by mtime.
+                COOKER_LOG=$(ls -1t "build/$${M}/tmp-glibc/log/cooker/$${M}"/*.log 2>/dev/null | head -1)
+                if [ -n "$${COOKER_LOG}" ]; then
+                    FAIL_SUMMARY=$(grep -E "^ERROR:" "$${COOKER_LOG}" 2>/dev/null || echo "  (log exists but no ERROR markers: $${COOKER_LOG})")
+                else
+                    FAIL_SUMMARY="  (no cooker log found under build/$${M}/tmp-glibc/log/cooker/$${M}/)"
+                fi
+                FAIL_REPORT="$${FAIL_REPORT}
+
+        --- MACHINE=$${M} (rc=$${RC}) ---
+        $${FAIL_SUMMARY}"
+            fi
+        done
+        echo
+        if [ -n "$${FAILED}" ]; then
+            echo "===================================================="
+            echo "  BUILDS DONE -- failed machines:$${FAILED}"
+            echo "===================================================="
+            echo "  FAILURE DETAILS (each ERROR line's log path is"
+            echo "  container-internal; full cooker logs live at"
+            echo "  build/<machine>/tmp-glibc/log/cooker/<machine>/"
+            echo "  and from the host directly at:"
+            echo "  \$${BUILDS_DIR:-\$${HOME}/dreamos-builds}/$${FORK}/$${BRANCH}/build/<machine>/tmp-glibc/log/cooker/)"
+            echo "===================================================="
+            echo "$${FAIL_REPORT}"
+            echo
+            exit 1
+        fi
+        echo "===================================================="
+        echo "  ALL BUILDS OK"
+        echo "===================================================="
+
+    # No auto-restart -- this is a one-shot batch job. Exit code carries
+    # the build result (0 = all OK, 1 = at least one MACHINE failed).
+    restart: "no"
+
+    # Same open-file limit as the long-running variants -- qtwebkit/boost
+    # linker phases blow through the default 1024.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
