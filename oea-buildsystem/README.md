@@ -182,7 +182,7 @@ Split a MACHINE workload across N stacks. Two axes:
 
 - **Same host, multiple stacks** — set `STACK=a`, `STACK=b`, ...
   to keep container names + hostnames unique (they template to
-  `oea-build-auto-${STACK:-a}`). Also unique `SSH_PORT` per stack
+  `oea-builder-auto-${STACK:-a}`). Also unique `SSH_PORT` per stack
   since ports are host-scoped. Different `-p` project names for
   isolated per-project volumes (temp + sstate).
 - **Multi-host farm** — every host runs one (or more) stacks. Host
@@ -220,7 +220,7 @@ STACK=b SSH_PORT=2223 MACHINES="vuduo4k gbquad4k" \
     docker compose -p oea-b -f docker-compose.build.volume.yaml up -d
 ```
 
-Container names: `oea-build-auto-a` and `oea-build-auto-b`. Both
+Container names: `oea-builder-auto-a` and `oea-builder-auto-b`. Both
 share the external `oea_sources` + `oea_deploy` volumes on the
 host; per-stack `oea_temp` + `oea_sstate` stay isolated.
 

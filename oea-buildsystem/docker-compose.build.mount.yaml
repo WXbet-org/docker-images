@@ -58,8 +58,8 @@
 services:
   oea-build:
     image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
-    container_name: oea-build-auto-${STACK:-a}
-    hostname: oea-build-auto-${STACK:-a}
+    container_name: oea-builder-auto-${STACK:-a}
+    hostname: oea-builder-auto-${STACK:-a}
 
     networks:
       - oea-build

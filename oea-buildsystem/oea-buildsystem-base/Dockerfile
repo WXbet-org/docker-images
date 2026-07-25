@@ -21,7 +21,7 @@
 # Test (once composed with a tree, but you can also mount the tree
 # manually for a shell-only test):
 #   docker run --rm -it \
-#       -v <path-to-build-enviroment>:/work \
+#       -v <path-to-build-enviroment>:/home/builder \
 #       oea-buildsystem-base:dev \
 #       bash
 #
@@ -208,14 +208,16 @@ RUN sed -ri \
         -e 's/^#?UsePAM.*/UsePAM yes/' \
         /etc/ssh/sshd_config
 
-# The source tree lives here after composition. Owned by the builder user
-# so `git ...` inside the container works without sudo dance.
-RUN install -d -o "$BUILD_USER" -g "$BUILD_USER" /work
+# The source tree lives at /home/builder/ after composition -- SSH /
+# `docker exec` land users right at the Makefile so `ls` and
+# `make MACHINE=... image` work immediately. /home/builder is already
+# created + owned by builder via `useradd -m` above; the repo image
+# adds the tree contents on top when the two images are composed.
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --chmod=0755 oea-retry.sh  /usr/local/bin/oea-retry
 
 USER $BUILD_USER
-WORKDIR /work
+WORKDIR /home/builder
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

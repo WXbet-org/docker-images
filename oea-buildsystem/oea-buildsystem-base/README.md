@@ -63,12 +63,12 @@ docker build -t oea-buildsystem-base:dev --build-arg UBUNTU_TAG=22.04 .   # olde
 
 ## Test without composition
 
-Mount a local checkout of `build-enviroment` at `/work` and get a shell
+Mount a local checkout of `build-enviroment` at `/home/builder` and get a shell
 to poke around:
 
 ```sh
 docker run --rm -it \
-    -v "/path/to/build-enviroment:/work" \
+    -v "/path/to/build-enviroment:/home/builder" \
     -v oea-temp-test:/temp \
     -v oea-sstate-test:/sstate-cache \
     -v oea-sources-test:/sources \
@@ -83,7 +83,7 @@ cold, no sstate):
 
 ```sh
 docker run --rm \
-    -v "/path/to/build-enviroment:/work" \
+    -v "/path/to/build-enviroment:/home/builder" \
     -v oea-temp-test:/temp \
     -v oea-sstate-test:/sstate-cache \
     -v oea-sources-test:/sources \
@@ -99,9 +99,9 @@ docker run --rm \
 
 On container start:
 
-1. Runs `make update` in `/work` — refreshes recipe submodules to their
+1. Runs `make update` in `/home/builder` — refreshes recipe submodules to their
    pinned tips.
-2. Writes `/work/conf/site.conf` with `SSTATE_MIRRORS` / `PREMIRRORS`
+2. Writes `/home/builder/conf/site.conf` with `SSTATE_MIRRORS` / `PREMIRRORS`
    lines if `SSTATE_MIRROR_URL` / `SOURCES_MIRROR_URL` are set.
 3. Symlinks the shared bitbake output paths onto the mounted volumes:
    - `builds/$DISTRO/sstate-cache` → `/sstate-cache`

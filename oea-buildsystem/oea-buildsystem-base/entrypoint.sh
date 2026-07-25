@@ -69,7 +69,7 @@ echo "    SOURCES_MIRROR_URL = ${SOURCES_MIRROR_URL:-<unset>}"
 echo "    MINIO_HOST         = ${MINIO_HOST:-<unset>}"
 echo "================================================================="
 
-cd /work
+cd /home/builder
 
 # --- 1b. Ensure mount roots are writable by builder --------------------
 # Docker-managed named volumes initialize their mount root as root:root
@@ -84,6 +84,15 @@ for d in /temp /sstate-cache /sources /deploy; do
         sudo chown builder:builder "$d"
     fi
 done
+
+# --- 1c. Discoverability symlinks in $HOME -----------------------------
+# When users SSH in they land in /home/builder. Symlink the four
+# volumes here as convenient shortcuts so `ls` shows everything and
+# `cd tmp/dm900/work/...` works without knowing the root paths.
+ln -sfn /temp         /home/builder/tmp
+ln -sfn /sstate-cache /home/builder/sstate-cache
+ln -sfn /sources      /home/builder/sources
+ln -sfn /deploy       /home/builder/deploy
 
 # --- 2. git identity ---------------------------------------------------
 git config --global --get user.email >/dev/null 2>&1 \

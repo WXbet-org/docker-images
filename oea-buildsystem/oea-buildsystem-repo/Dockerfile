@@ -24,5 +24,9 @@ LABEL org.opencontainers.image.version="${BRANCH}"
 LABEL org.opencontainers.image.branch="${BRANCH}"
 
 # Owned by uid/gid 1000 which matches the `builder` user in the base
-# image, so no chown dance is needed after composition.
-COPY --chown=1000:1000 repo/ /work/
+# image. The tree is baked into /home/builder/ so users who `docker
+# exec` / SSH in land right at the Makefile and can `make MACHINE=…
+# image` from cwd. base's useradd -m already provides an empty
+# /home/builder/ from its layers; this layer merges the tree
+# contents into it.
+COPY --chown=1000:1000 repo/ /home/builder/
