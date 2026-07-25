@@ -171,7 +171,16 @@ ENV LC_ALL=en_US.UTF-8
 ARG BUILD_USER=builder
 ARG BUILD_UID=1000
 ARG BUILD_GID=1000
-RUN groupadd -g "$BUILD_GID" "$BUILD_USER" \
+# Ubuntu 24.04+ ships with a pre-created `ubuntu` user at uid/gid 1000
+# in the base image. It'd collide with our builder, so evict it first
+# (idempotent: --force silently succeeds if the user/group is absent).
+RUN if getent passwd "$BUILD_UID" >/dev/null; then \
+        userdel -r -f "$(getent passwd "$BUILD_UID" | cut -d: -f1)" 2>/dev/null || true; \
+    fi \
+ && if getent group "$BUILD_GID" >/dev/null; then \
+        groupdel -f "$(getent group "$BUILD_GID" | cut -d: -f1)" 2>/dev/null || true; \
+    fi \
+ && groupadd -g "$BUILD_GID" "$BUILD_USER" \
  && useradd  -m -u "$BUILD_UID" -g "$BUILD_GID" -s /bin/bash "$BUILD_USER" \
  && echo "${BUILD_USER}:${BUILD_USER}" | chpasswd \
  && printf '%s ALL=(ALL) NOPASSWD:ALL\nDefaults env_keep += "DEBIAN_FRONTEND"\n' \
