@@ -1,0 +1,62 @@
+# MinIO — S3-compatible object store used as sstate-mirror, downloads
+# mirror and deploy artefact store for the oea-buildsystem pipeline.
+#
+# Runs on a shared docker network `oea-build` so build containers can
+# reach it via the hostname `minio` (i.e. http://minio:9000). This
+# network is external so it survives compose down/up cycles and lets
+# other stacks join without depending on this file.
+#
+# One-time host prep:
+#   docker network create oea-build || true
+#
+# Usage:
+#   MINIO_ROOT_PASSWORD='your-strong-password-here' \
+#       docker compose up -d
+#
+# Access:
+#   S3 API:       http://<host>:9000            (used by build containers)
+#   Web console:  http://<host>:9001            (browser login as admin)
+#
+# See README.md for the initial bucket + policy + service-user setup
+# that must be done once after first start.
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    hostname: minio
+    networks:
+      - oea-build
+    ports:
+      - "9000:9000"    # S3 API
+      - "9001:9001"    # Web console
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-admin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD env var must be set (>=8 chars)}"
+      # Cosmetic: the browser tab title / login banner.
+      MINIO_BROWSER_REDIRECT_URL: "${MINIO_BROWSER_REDIRECT_URL:-http://localhost:9001}"
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  # Shared bridge network. Build containers must join it to reach
+  # http://minio:9000. `external: true` avoids docker deleting the
+  # network on `compose down` (would break other stacks that joined).
+  oea-build:
+    external: true
+
+volumes:
+  # Docker-managed named volume for MinIO's data (all buckets + object
+  # storage + internal state). Stored under
+  # /var/lib/docker/volumes/minio_minio_data/_data/ on the host.
+  # BACK THIS UP -- losing it means losing the whole sstate mirror
+  # and every deployed feed artefact.
+  minio_data:
