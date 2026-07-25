@@ -73,10 +73,10 @@ You also need two shared Docker volumes for sources + deploy (all
 oea stacks on this host share them):
 
 ```sh
-docker volume create oea_sources
-docker volume create oea_deploy
+docker volume create oea-buildsystem_sources
+docker volume create oea-buildsystem_deploy
 # fix ownership so builder (uid 1000) can write:
-docker run --rm --user 0:0 -v oea_sources:/x -v oea_deploy:/y \
+docker run --rm --user 0:0 -v oea-buildsystem_sources:/x -v oea-buildsystem_deploy:/y \
     alpine chown -R 1000:1000 /x /y
 ```
 
@@ -221,8 +221,8 @@ STACK=b SSH_PORT=2223 MACHINES="vuduo4k gbquad4k" \
 ```
 
 Container names: `oea-builder-auto-a` and `oea-builder-auto-b`. Both
-share the external `oea_sources` + `oea_deploy` volumes on the
-host; per-stack `oea_temp` + `oea_sstate` stay isolated.
+share the external `oea-buildsystem_sources` + `oea-buildsystem_deploy` volumes on the
+host; per-stack `<project>_temp` + `<project>_sstate` stay isolated.
 
 Each stack cycles its own subset independently. When host A finishes
 `qtbase-native` for `dm900`, the resulting sstate blob is on MinIO
@@ -263,7 +263,7 @@ produced some intermediate sstate blobs and source fetches that are
 useful to the next attempt.
 
 Deploy artefacts (`.ipk` feeds, kernel, rootfs) are NOT synced to
-MinIO. They land on the shared `oea_deploy` volume on the host, and
+MinIO. They land on the shared `oea-buildsystem_deploy` volume on the host, and
 a separate downstream job publishes them (feed hosting, rsync, ...
 — TBD).
 
@@ -284,7 +284,7 @@ cat /home/builder/temp/.oea-priority            # MACHINEs queued via `oea-retry
 
 ### Bitbake cooker logs
 
-Per-MACHINE, timestamped, on the `oea_temp` volume:
+Per-MACHINE, timestamped, on the `<project>_temp` volume:
 
 ```sh
 ls -1t /temp/<MACHINE>/log/cooker/<MACHINE>/*.log | head

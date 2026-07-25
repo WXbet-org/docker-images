@@ -31,7 +31,7 @@ services:
       - "9000:9000"    # S3 API
       - "9001:9001"    # Web console
     volumes:
-      - minio_data:/data
+      - data:/data
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:-admin}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD env var must be set (>=8 chars)}"
@@ -55,8 +55,10 @@ networks:
 
 volumes:
   # Docker-managed named volume for MinIO's data (all buckets + object
-  # storage + internal state). Stored under
-  # /var/lib/docker/volumes/minio_minio_data/_data/ on the host.
+  # storage + internal state). Full docker name is
+  # <project>_data -- e.g. oea-buildsystem-minio_data if you deploy
+  # this stack under the default project name "oea-buildsystem-minio".
+  # Stored under /var/lib/docker/volumes/<full-name>/_data/ on the host.
   # BACK THIS UP -- losing it means losing the whole sstate mirror
-  # and every deployed feed artefact.
-  minio_data:
+  # and every source tarball you seeded.
+  data:

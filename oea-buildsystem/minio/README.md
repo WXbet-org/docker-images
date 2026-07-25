@@ -15,7 +15,7 @@ anonymous-download policy so bitbake doesn't need credentials on the
 read path. Write access uses a dedicated service account (`builder`).
 
 Deploy artefacts (kernel, rootfs, `.ipk` feeds) do NOT flow through
-MinIO -- they live on the shared `oea_deploy` Docker volume on the
+MinIO -- they live on the shared `oea-buildsystem_deploy` Docker volume on the
 build host, and a separate downstream job (feed hosting, rsync)
 publishes them from there.
 
@@ -205,10 +205,10 @@ docker run --rm \
     -e MINIO_HOST=minio:9000 \
     -e MINIO_ACCESS_KEY=builder \
     -e MINIO_SECRET_KEY=<BUILDER_SECRET_KEY> \
-    -v oea_temp:/temp \
-    -v oea_sstate:/sstate-cache \
-    -v oea_sources:/sources \
-    -v oea_deploy:/deploy \
+    -v <project>_temp:/temp \
+    -v <project>_sstate:/sstate-cache \
+    -v oea-buildsystem_sources:/sources \
+    -v oea-buildsystem_deploy:/deploy \
     ghcr.io/wxbet-org/oea-buildsystem:6.0
 ```
 
@@ -239,23 +239,23 @@ that dies at MACHINE 30/50 still leaves 29 MACHINEs worth of sstate
 on MinIO for the next attempt or other concurrent containers.
 
 Deploy artefacts are NOT synced to MinIO -- they land on the shared
-`oea_deploy` Docker volume, and a separate publishing job takes it
+`oea-buildsystem_deploy` Docker volume, and a separate publishing job takes it
 from there (see [`oea-buildsystem/README.md`](../README.md)).
 
 ## Backup
 
-The `minio_data` volume IS the source of truth for the whole sstate
+The `<project>_data` volume IS the source of truth for the whole sstate
 + feed history. Nightly snapshot recommended:
 
 ```sh
 docker run --rm \
-    -v minio_minio_data:/data:ro \
+    -v <project>_data:/data:ro \
     -v "$PWD/backups":/backup \
     alpine tar czf "/backup/minio-$(date +%Y%m%d).tgz" -C /data .
 ```
 
 Restore: stop MinIO, wipe the volume, untar back into
-`/var/lib/docker/volumes/minio_minio_data/_data/`, start again.
+`/var/lib/docker/volumes/<project>_data/_data/`, start again.
 
 ## Security notes
 

@@ -96,10 +96,10 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      - "oea_temp:/home/builder/temp"
-      - "oea_sstate:/home/builder/sstate-cache"
-      - "oea_sources:/home/builder/sources"
-      - "oea_deploy:/home/builder/deploy"
+      - "temp:/home/builder/temp"
+      - "sstate:/home/builder/sstate-cache"
+      - "sources:/home/builder/sources"
+      - "deploy:/home/builder/deploy"
 
     # Host prerequisites (see oea-buildsystem-base/README.md):
     #   kernel.apparmor_restrict_unprivileged_userns=0
@@ -126,24 +126,26 @@ networks:
     external: true
 
 volumes:
-  # oea_temp + oea_sstate are per-project (Docker prefixes with the
-  # project name) -- concurrent stacks stay isolated on tmp/work
-  # (races) and sstate (bitbake write fragility). Cross-stack sstate
-  # sharing happens via the MinIO mirror instead.
-  oea_temp:
-  oea_sstate:
-  # oea_sources + oea_deploy are external, shared across every stack
-  # on the host. Create once with:
-  #   docker volume create oea_sources
-  #   docker volume create oea_deploy
-  #   docker run --rm --user 0:0 -v oea_sources:/x -v oea_deploy:/y \
+  # temp + sstate are per-project (Docker prefixes with the compose
+  # project name, e.g. `oea-buildsystem-auto-openatv-1_temp`) --
+  # concurrent stacks stay isolated on tmp/work (races) and sstate
+  # (bitbake write fragility). Cross-stack sstate sharing happens
+  # via the MinIO mirror instead.
+  temp:
+  sstate:
+  # sources + deploy are external, shared across every oea-buildsystem
+  # stack on the host. Create once with:
+  #   docker volume create oea-buildsystem_sources
+  #   docker volume create oea-buildsystem_deploy
+  #   docker run --rm --user 0:0 \
+  #       -v oea-buildsystem_sources:/x -v oea-buildsystem_deploy:/y \
   #       alpine chown -R 1000:1000 /x /y
   # sources are URL-content-addressed (safe to share, no MinIO round-
   # trip for locally-cached tarballs). deploy has per-MACHINE subdirs
   # so different stacks with disjoint MACHINE sets never collide.
-  oea_sources:
+  sources:
     external: true
-    name: oea_sources
-  oea_deploy:
+    name: oea-buildsystem_sources
+  deploy:
     external: true
-    name: oea_deploy
+    name: oea-buildsystem_deploy
