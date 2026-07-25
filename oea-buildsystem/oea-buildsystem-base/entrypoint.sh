@@ -102,8 +102,20 @@ cd /home/builder/workspace
 # from an already-1000-owned host path skip this cleanly (the [ ! -w ]
 # check is false). Only the top-level dir is chowned -- avoids a slow
 # recursive chown over a 200 GB temp/.
+#
+# The BUILDS_ROOT mount is deep under workspace/ -- docker auto-creates
+# the intermediate parents (workspace/builds/ and workspace/builds/$DISTRO/)
+# as root:root, so both need chowning too or the entrypoint can't ln -s
+# the sstate-cache symlink inside builds/$DISTRO/.
 BUILDS_ROOT="/home/builder/workspace/builds/$DISTRO/$DISTRO_TYPE"
-for d in "$BUILDS_ROOT" /home/builder/sstate-cache /home/builder/sources /home/builder/deploy; do
+for d in \
+    /home/builder/workspace/builds \
+    "/home/builder/workspace/builds/$DISTRO" \
+    "$BUILDS_ROOT" \
+    /home/builder/sstate-cache \
+    /home/builder/sources \
+    /home/builder/deploy
+do
     if [ -d "$d" ] && [ ! -w "$d" ]; then
         echo ">>> chown $d (mount root not writable by builder)"
         sudo chown builder:builder "$d"
