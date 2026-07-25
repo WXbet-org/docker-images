@@ -51,7 +51,7 @@ docker run --rm \
     ghcr.io/wxbet-org/oea-buildsystem:6.0
 ```
 
-After each MACHINE finishes the entrypoint mc-mirrors sstate + sources
+After each MACHINE finishes the entrypoint `mcli`-mirrors sstate + sources
 back to MinIO (deploy too on success), so a container that dies at
 MACHINE 30/50 still leaves 29 MACHINEs worth of warmth for the next.
 

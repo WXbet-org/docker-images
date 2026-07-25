@@ -3,7 +3,7 @@
 #
 # Continuous MACHINE loop: builds every MACHINE in $MACHINES in
 # round-robin, forever. After each MACHINE (success or fail) sstate +
-# sources are mc-mirrored to MinIO, deploy on success. Persistent
+# sources are mcli-mirrored to MinIO, deploy on success. Persistent
 # state file on the /temp volume tracks the last completed MACHINE
 # so `docker compose stop` / `compose down` / SIGTERM cleanly finish
 # the current MACHINE and the next `compose up` resumes where it
@@ -28,7 +28,7 @@
 #   Read side (bitbake reads mirrors via HTTP GET, no auth needed):
 #     SSTATE_MIRROR_URL   e.g. http://minio:9000/sstate-openatv-6.0
 #     SOURCES_MIRROR_URL  e.g. http://minio:9000/sources
-#   Write side (mc mirror after each MACHINE, service-account write auth):
+#   Write side (mcli mirror after each MACHINE, service-account write auth):
 #     MINIO_HOST          e.g. minio:9000
 #     MINIO_ACCESS_KEY    service-account access key
 #     MINIO_SECRET_KEY    service-account secret key
@@ -123,12 +123,16 @@ if ! pgrep -x sshd >/dev/null 2>&1; then
     sudo /usr/sbin/sshd
 fi
 
-# --- 7. mc (MinIO client) setup: only if all three write creds given ---
+# --- 7. mcli (MinIO client) setup: only if all three write creds given ---
+# Binary is installed as `mcli` (not `mc`) to avoid clashing with the
+# Midnight Commander apt package. MinIO derives its env-var prefix
+# from the invoked binary name, so the alias env-var is
+# MCLI_HOST_local (not MC_HOST_local).
 MC_ENABLED=0
 if [ -n "${MINIO_HOST:-}" ] && [ -n "${MINIO_ACCESS_KEY:-}" ] && [ -n "${MINIO_SECRET_KEY:-}" ]; then
-    export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@${MINIO_HOST}"
+    export MCLI_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@${MINIO_HOST}"
     MC_ENABLED=1
-    echo ">>> mc post-MACHINE sync enabled (target: ${MINIO_HOST})"
+    echo ">>> mcli post-MACHINE sync enabled (target: ${MINIO_HOST})"
 fi
 
 # --- 8. Passed command overrides the build loop (dev stacks) -----------
@@ -229,14 +233,14 @@ while true; do
 
         # --- MinIO sync (per-MACHINE, right after the build) ---
         if [ "$MC_ENABLED" = "1" ]; then
-            echo ">>> mc mirror sstate + sources -> MinIO"
-            mc mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
+            echo ">>> mcli mirror sstate + sources -> MinIO"
+            mcli mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
                 || echo "!!! sstate sync failed (continuing)"
-            mc mirror --overwrite --newer /sources/      "local/sources/" \
+            mcli mirror --overwrite --newer /sources/      "local/sources/" \
                 || echo "!!! sources sync failed (continuing)"
             if [ "$RC" = "0" ]; then
-                echo ">>> mc mirror deploy/$M -> MinIO"
-                mc mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
+                echo ">>> mcli mirror deploy/$M -> MinIO"
+                mcli mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
                     || echo "!!! deploy sync failed for $M"
             else
                 echo ">>> skipping deploy sync for $M (build failed, artefacts may be partial)"

@@ -117,7 +117,7 @@ On container start:
    - Symlinks per-MACHINE paths: `builds/$DISTRO/$DISTRO_TYPE/$M/tmp`
      → `/temp/$M`, then `/temp/$M/deploy` → `/deploy/$M`.
    - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
-   - If MinIO write creds are set: `mc mirror` sstate + sources
+   - If MinIO write creds are set: `mcli mirror` sstate + sources
      (success or fail — the intermediate blobs are useful either
      way). On success, also mirrors `/deploy/$M/` to MinIO.
    - Writes `$M` to `/temp/.oea-last-machine` so a later restart
@@ -143,7 +143,7 @@ an instant freeze (memory retained), use `docker compose pause`;
 | `ACTION` | `image` | Any Makefile target: `image`, `feeds`, `enigma2`, `package-index`, … |
 | `SSTATE_MIRROR_URL` | *(unset)* | Read-side sstate mirror, e.g. `http://minio:9000/sstate-openatv-6.0`. |
 | `SOURCES_MIRROR_URL` | *(unset)* | Read-side sources mirror, e.g. `http://minio:9000/sources`. |
-| `MINIO_HOST` | *(unset)* | Write-side host, e.g. `minio:9000`. Enables mc mirror when set together with the two keys below. |
+| `MINIO_HOST` | *(unset)* | Write-side host, e.g. `minio:9000`. Enables `mcli mirror` when set together with the two keys below. |
 | `MINIO_ACCESS_KEY` | *(unset)* | Service-account access key with `readwrite` on the sstate / sources / deploy buckets. |
 | `MINIO_SECRET_KEY` | *(unset)* | Corresponding secret key. |
 
@@ -152,7 +152,7 @@ an instant freeze (memory retained), use `docker compose pause`;
 | Path | Purpose | Typical size |
 |------|---------|--------------|
 | `/temp` | TMPDIR — per-MACHINE subdirs (`/temp/$M/work`, `/temp/$M/sysroots-*`, `/temp/$M/stamps`). Persistent so a killed container's build state survives for debug. | 50-200 GB across all MACHINEs |
-| `/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mc mirror` after each MACHINE. | 5-50 GB |
+| `/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mcli mirror` after each MACHINE. | 5-50 GB |
 | `/sources` | DL_DIR — upstream source tarballs, shared across MACHINEs. Same read/write flow as sstate. | 2-20 GB |
 | `/deploy` | Deploy artefacts (kernel, rootfs, `.deb` feeds) per-MACHINE subdir (`/deploy/$M/`). Mirrored to MinIO on successful build. | 1-10 GB per MACHINE |
 
@@ -163,6 +163,19 @@ an instant freeze (memory retained), use `docker compose pause`;
 - Entrypoint logic changes
 
 **Not** when the source tree changes — that's the tree image's job.
+
+## `mc` naming note
+
+Two different `mc` tools show up here:
+
+- **`mc`** (from apt) — [Midnight Commander](https://midnight-commander.org),
+  the terminal file manager. Useful when you `ssh -p 2222 builder@…`
+  into a running container to poke around `/temp/<MACHINE>/work/…`.
+- **`mcli`** (curl'd from `dl.min.io`) — MinIO Client, used by the
+  entrypoint for post-MACHINE sync. Installed under this alternate
+  name (documented by MinIO) precisely to avoid clashing with
+  Midnight Commander. Env-var prefix becomes `MCLI_*`
+  (`MCLI_HOST_local`, etc.), not `MC_*`.
 
 ## Adding a new Ubuntu variant
 
