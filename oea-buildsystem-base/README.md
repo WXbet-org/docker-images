@@ -67,9 +67,11 @@ to poke around:
 ```sh
 docker run --rm -it \
     -v "/path/to/build-enviroment:/work" \
+    -v oea-temp-test:/temp \
     -v oea-sstate-test:/sstate-cache \
+    -v oea-sources-test:/sources \
     -v oea-deploy-test:/deploy \
-    -e MACHINE=dm900 \
+    -e MACHINES=dm900 \
     --entrypoint bash \
     oea-buildsystem-base:dev
 ```
@@ -80,9 +82,11 @@ cold, no sstate):
 ```sh
 docker run --rm \
     -v "/path/to/build-enviroment:/work" \
+    -v oea-temp-test:/temp \
     -v oea-sstate-test:/sstate-cache \
+    -v oea-sources-test:/sources \
     -v oea-deploy-test:/deploy \
-    -e MACHINE=dm900 \
+    -e MACHINES=dm900 \
     -e DISTRO=openatv \
     -e DISTRO_TYPE=release \
     -e ACTION=image \
@@ -91,39 +95,54 @@ docker run --rm \
 
 ## Entrypoint contract
 
-The container is a one-shot build by default. On start it:
+On container start:
 
-1. Runs `make update` in `/work` — refreshes recipe submodules to the
-   pinned tips at container start time.
+1. Runs `make update` in `/work` — refreshes recipe submodules to their
+   pinned tips.
 2. Writes `/work/conf/site.conf` with `SSTATE_MIRRORS` / `PREMIRRORS`
-   lines if `SSTATE_MIRROR_URL` / `DL_MIRROR_URL` env-vars are set.
-3. Symlinks `builds/$DISTRO/sstate-cache → /sstate-cache` and
-   `builds/$DISTRO/$DISTRO_TYPE/$MACHINE/tmp/deploy → /deploy/$MACHINE`
-   so bitbake writes directly into the mounted volumes (zero-copy).
-4. Starts `sshd` on port 22 in the background (host keys ephemeral,
-   regenerated per container start). Login: `builder` / `builder`.
-5. If a `command:` was passed (e.g. `sleep infinity` for dev stacks),
-   `exec`s it here and stops. Otherwise:
-6. Runs `make MACHINE=… DISTRO=… DISTRO_TYPE=… $ACTION` and exits
-   with make's return code so the orchestrator sees pass/fail.
+   lines if `SSTATE_MIRROR_URL` / `SOURCES_MIRROR_URL` are set.
+3. Symlinks the shared bitbake output paths onto the mounted volumes:
+   - `builds/$DISTRO/sstate-cache` → `/sstate-cache`
+   - `builds/$DISTRO/downloads` → `/sources`
+4. Starts `sshd` on port 22 (host keys ephemeral, one-time client
+   warning per container recreate). Login: `builder` / `builder`.
+5. If a `command:` was passed (dev stacks pass `sleep infinity`),
+   `exec`s it here and skips the build loop. Otherwise:
+6. Loops over `$MACHINES` (space-separated). For each MACHINE `$M`:
+   - Symlinks per-MACHINE paths: `builds/$DISTRO/$DISTRO_TYPE/$M/tmp`
+     → `/temp/$M`, then `/temp/$M/deploy` → `/deploy/$M`.
+   - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
+   - If MinIO write creds are set, `mc mirror`s sstate + sources
+     immediately to MinIO (success or fail — the sstate blobs and
+     source tarballs are useful either way). On success, also mirrors
+     `/deploy/$M/` to MinIO.
+7. Exits 0 if every MACHINE succeeded, 1 otherwise. Fail report lists
+   the offending MACHINEs with their ERROR: markers from the cooker
+   log.
 
 ## Environment variables
 
 | Name | Default | Purpose |
 |------|---------|---------|
-| `MACHINE` | *(required)* | e.g. `dm900`, `vuduo4k`, `xpeedlx3` |
-| `DISTRO` | `openatv` | distro built from `build-enviroment` (e.g. `openatv`) |
-| `DISTRO_TYPE` | `release` | e.g. `release`, `experimental` |
-| `ACTION` | `image` | any Makefile target: `image`, `feeds`, `enigma2`, `package-index`, ... |
-| `SSTATE_MIRROR_URL` | *(unset)* | HTTP(S) sstate mirror, e.g. `https://sstate.example/openatv/6.0` |
-| `DL_MIRROR_URL` | *(unset)* | HTTP(S) download mirror, e.g. `https://dl.example` |
+| `MACHINES` | *(required)* | Space-separated list, e.g. `"dm900 dm920 vuduo4k"`. Fallback: single `MACHINE=`. |
+| `DISTRO` | `openatv` | Distro built from `build-enviroment`. |
+| `DISTRO_TYPE` | `release` | e.g. `release`, `experimental`. |
+| `BRANCH` | `6.0` | `build-enviroment` branch. Used for MinIO bucket naming (`sstate-${DISTRO}-${BRANCH}`). |
+| `ACTION` | `image` | Any Makefile target: `image`, `feeds`, `enigma2`, `package-index`, … |
+| `SSTATE_MIRROR_URL` | *(unset)* | Read-side sstate mirror, e.g. `http://minio:9000/sstate-openatv-6.0`. |
+| `SOURCES_MIRROR_URL` | *(unset)* | Read-side sources mirror, e.g. `http://minio:9000/sources`. |
+| `MINIO_HOST` | *(unset)* | Write-side host, e.g. `minio:9000`. Enables mc mirror when set together with the two keys below. |
+| `MINIO_ACCESS_KEY` | *(unset)* | Service-account access key with `readwrite` on the sstate / sources / deploy buckets. |
+| `MINIO_SECRET_KEY` | *(unset)* | Corresponding secret key. |
 
 ## Volumes
 
-| Path | Mode | Purpose |
-|------|------|---------|
-| `/sstate-cache` | rw | Local sstate for this container run. Read-mostly hits get served from `SSTATE_MIRROR_URL`; new objects write here. Recommend one volume per container to avoid bitbake's cross-build cleanup races. |
-| `/deploy` | rw | Artefact drop-zone. Container writes to `/deploy/$MACHINE/…`. Safe to share across concurrent containers since each writes to its own MACHINE subdir. |
+| Path | Purpose | Typical size |
+|------|---------|--------------|
+| `/temp` | TMPDIR — per-MACHINE subdirs (`/temp/$M/work`, `/temp/$M/sysroots-*`, `/temp/$M/stamps`). Persistent so a killed container's build state survives for debug. | 50-200 GB across all MACHINEs |
+| `/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mc mirror` after each MACHINE. | 5-50 GB |
+| `/sources` | DL_DIR — upstream source tarballs, shared across MACHINEs. Same read/write flow as sstate. | 2-20 GB |
+| `/deploy` | Deploy artefacts (kernel, rootfs, `.deb` feeds) per-MACHINE subdir (`/deploy/$M/`). Mirrored to MinIO on successful build. | 1-10 GB per MACHINE |
 
 ## When to rebuild this image
 

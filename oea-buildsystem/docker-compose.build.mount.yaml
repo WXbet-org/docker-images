@@ -1,83 +1,90 @@
-# oea-buildsystem -- one-shot bitbake build, one MACHINE per container.
+# oea-buildsystem -- one-shot batch build, N MACHINEs per container.
 #
-# Same one-MACHINE-per-container contract as docker-compose.volume.yaml,
-# but /sstate-cache and /deploy are bind-mounted from host paths
-# instead of Docker-managed named volumes. Lets you `ls tmp-glibc/...`
-# from the host, or point at a shared filesystem the whole farm sees.
+# Same lifecycle as docker-compose.build.volume.yaml (entrypoint loops
+# over $MACHINES, mc-mirror to MinIO after each MACHINE), but the four
+# storage volumes are bind-mounted from host paths instead of
+# Docker-managed named volumes. Lets you `ls /var/lib/oea-build/...`
+# from the host or point at a shared farm filesystem.
 #
-# WARNING -- UID/GID: the container runs as `builder` (uid 1000, gid 1000).
-# The bind-mount targets on the host MUST be owned by uid 1000 or the
-# container's `make image` immediately fails with "Permission denied"
-# on the first attempt to write sstate/deploy. One-time fix on the host:
-#   sudo mkdir -p ${SSTATE_DIR:-/var/lib/oea-build/sstate/${MACHINE}} \
-#                 ${DEPLOY_DIR:-/var/lib/oea-build/deploy}
-#   sudo chown -R 1000:1000 ${SSTATE_DIR%/*} ${DEPLOY_DIR}
+# WARNING -- UID/GID: the container runs as `builder` (uid/gid 1000).
+# All four bind-mount targets on the host MUST be owned by 1000 or
+# the entrypoint immediately fails with "Permission denied". One-time
+# host fix:
+#   sudo mkdir -p \
+#        ${TEMP_DIR:-/var/lib/oea-build/temp} \
+#        ${SSTATE_DIR:-/var/lib/oea-build/sstate} \
+#        ${SOURCES_DIR:-/var/lib/oea-build/sources} \
+#        ${DEPLOY_DIR:-/var/lib/oea-build/deploy}
+#   sudo chown -R 1000:1000 /var/lib/oea-build
 #
 # Usage:
-#   MACHINE=dm900 docker compose -f docker-compose.mount.yaml up            # foreground
-#   MACHINE=dm900 docker compose -f docker-compose.mount.yaml up -d         # detached
-#   docker compose -f docker-compose.mount.yaml logs -f                     # follow log stream
+#   MACHINES="dm900 dm920" docker compose -f docker-compose.build.mount.yaml up
+#   MACHINES="dm900 dm920" docker compose -f docker-compose.build.mount.yaml up -d
+#   docker compose -f docker-compose.build.mount.yaml logs -f
 #
-# Environment overrides (via .env, shell or Komodo stack env):
-#   MACHINE=dm900              # REQUIRED -- one MACHINE per stack
-#   BRANCH=6.0                 # image tag        (default: 6.0)
-#   DISTRO=openatv             # distro variant   (default: openatv)
-#   DISTRO_TYPE=release        # release/experimental (default: release)
-#   ACTION=image               # any Makefile target (default: image)
-#   SSTATE_DIR=/data/oea-sstate   # host path for sstate-cache
-#                                 # (default: /var/lib/oea-build/sstate/<MACHINE>)
-#   DEPLOY_DIR=/data/oea-deploy   # host path for deploy artefacts
-#                                 # (default: /var/lib/oea-build/deploy)
-#   SSTATE_MIRROR_URL=...      # e.g. http://minio:9000/sstate-openatv-6.0
-#   DL_MIRROR_URL=...          # e.g. http://minio:9000/downloads
+# Environment overrides:
+#
+#   Required:
+#     MACHINES="dm900 dm920 ..."      space-separated list of MACHINEs
+#
+#   Host paths (bind-mount sources):
+#     TEMP_DIR=/data/oea/temp         host path for /temp    (default: /var/lib/oea-build/temp)
+#     SSTATE_DIR=/data/oea/sstate     host path for /sstate-cache (default: /var/lib/oea-build/sstate)
+#     SOURCES_DIR=/data/oea/sources   host path for /sources (default: /var/lib/oea-build/sources)
+#     DEPLOY_DIR=/data/oea/deploy     host path for /deploy  (default: /var/lib/oea-build/deploy)
+#
+#   Build tuning:
+#     BRANCH=6.0                      composed image tag (default: 6.0)
+#     DISTRO=openatv                  distro variant  (default: openatv)
+#     DISTRO_TYPE=release             (default: release)
+#     ACTION=image                    make target     (default: image)
+#
+#   MinIO integration (all optional):
+#     SSTATE_MIRROR_URL=...
+#     SOURCES_MIRROR_URL=...
+#     MINIO_HOST=minio:9000
+#     MINIO_ACCESS_KEY=builder
+#     MINIO_SECRET_KEY=<secret>
 
 services:
   oea-build:
     image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
-    container_name: oea-build-${MACHINE:?MACHINE env var must be set (e.g. dm900, vuduo4k)}
-    hostname: oea-build-${MACHINE}
+    container_name: oea-build-auto
+    hostname: oea-build-auto
 
     networks:
-      # Same shared docker network as minio -- lets the container
-      # reach http://minio:9000 by hostname if SSTATE_MIRROR_URL /
-      # DL_MIRROR_URL point at it. External: assumed pre-created by
-      # the minio stack (`docker network create oea-build`).
       - oea-build
 
     environment:
-      MACHINE: "${MACHINE}"
+      MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"dm900 dm920\")}"
       DISTRO: "${DISTRO:-openatv}"
       DISTRO_TYPE: "${DISTRO_TYPE:-release}"
+      BRANCH: "${BRANCH:-6.0}"
       ACTION: "${ACTION:-image}"
       SSTATE_MIRROR_URL: "${SSTATE_MIRROR_URL:-}"
-      DL_MIRROR_URL: "${DL_MIRROR_URL:-}"
+      SOURCES_MIRROR_URL: "${SOURCES_MIRROR_URL:-}"
+      MINIO_HOST: "${MINIO_HOST:-}"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-}"
       TERM: "${TERM:-xterm-256color}"
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      # Bind-mounted host paths. Per-MACHINE sstate dir avoids
-      # concurrent-MACHINE races on tmp-glibc/work; shared deploy
-      # is safe because entrypoint writes to /deploy/<MACHINE>/ only.
-      - "${SSTATE_DIR:-/var/lib/oea-build/sstate/${MACHINE}}:/sstate-cache"
+      - "${TEMP_DIR:-/var/lib/oea-build/temp}:/temp"
+      - "${SSTATE_DIR:-/var/lib/oea-build/sstate}:/sstate-cache"
+      - "${SOURCES_DIR:-/var/lib/oea-build/sources}:/sources"
       - "${DEPLOY_DIR:-/var/lib/oea-build/deploy}:/deploy"
 
-    # Host prerequisites (see oea-buildsystem-base/README.md):
-    #   kernel.apparmor_restrict_unprivileged_userns=0
-    #   fs.inotify.max_user_watches=524288
-    # If you can't set them host-wide, per-container fallbacks:
     security_opt:
       - apparmor=unconfined
     sysctls:
       fs.inotify.max_user_watches: 524288
 
-    # qtwebkit / boost linker phases blow through the default 1024.
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
 
-    # One-shot batch job -- exit code carries the build result
-    # (0 = OK, non-zero = bitbake failure). No auto-restart.
     restart: "no"
 
 networks:

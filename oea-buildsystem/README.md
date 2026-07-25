@@ -28,22 +28,32 @@ Consumers should pull `:<branch>` for tracking or `:<branch>-vX.Y.Z`
 
 ## Usage
 
-One container = one MACHINE build = one `docker run`. Exit code is
-bitbake's — orchestrator can fan-in results.
+One container can build one MACHINE (dev) or many MACHINEs
+sequentially (batch). Exit code is 0 if every MACHINE succeeded.
 
 ```sh
 docker run --rm \
     --network oea-build \
-    -e MACHINE=dm900 \
+    -e MACHINES="dm900 dm920" \
     -e DISTRO=openatv \
+    -e BRANCH=6.0 \
     -e DISTRO_TYPE=release \
     -e ACTION=image \
     -e SSTATE_MIRROR_URL=http://minio:9000/sstate-openatv-6.0 \
-    -e DL_MIRROR_URL=http://minio:9000/downloads \
-    -v oea-sstate-dm900:/sstate-cache \
-    -v oea-deploy:/deploy \
+    -e SOURCES_MIRROR_URL=http://minio:9000/sources \
+    -e MINIO_HOST=minio:9000 \
+    -e MINIO_ACCESS_KEY=builder \
+    -e MINIO_SECRET_KEY=<secret> \
+    -v oea_temp:/temp \
+    -v oea_sstate:/sstate-cache \
+    -v oea_sources:/sources \
+    -v oea_deploy:/deploy \
     ghcr.io/wxbet-org/oea-buildsystem:6.0
 ```
+
+After each MACHINE finishes the entrypoint mc-mirrors sstate + sources
+back to MinIO (deploy too on success), so a container that dies at
+MACHINE 30/50 still leaves 29 MACHINEs worth of warmth for the next.
 
 Full env-var + volume contract lives in [`oea-buildsystem-base`](../oea-buildsystem-base#environment-variables).
 Host prerequisites (`kernel.apparmor_restrict_unprivileged_userns=0`
@@ -52,33 +62,29 @@ Host prerequisites (`kernel.apparmor_restrict_unprivileged_userns=0`
 ## Compose stacks (Komodo / Portainer / plain compose)
 
 Four ready-made compose files cover the two axes {batch vs dev} ×
-{bind-mount vs named volume}. Pick the row that matches how you
-want to run, and the column that matches where sstate/deploy
-should live:
+{bind-mount vs named volume}:
 
 | File                                | Lifecycle                                  | Storage                     |
 |-------------------------------------|--------------------------------------------|-----------------------------|
-| [`docker-compose.build.volume.yaml`](docker-compose.build.volume.yaml) | one-shot: setup → `make image` → exit | Docker-managed volumes      |
-| [`docker-compose.build.mount.yaml`](docker-compose.build.mount.yaml)   | one-shot: setup → `make image` → exit | Bind-mounted host paths     |
-| [`docker-compose.volume.yaml`](docker-compose.volume.yaml)             | long-running: setup → `sleep infinity` | Docker-managed volumes      |
-| [`docker-compose.mount.yaml`](docker-compose.mount.yaml)               | long-running: setup → `sleep infinity` | Bind-mounted host paths     |
+| [`docker-compose.build.volume.yaml`](docker-compose.build.volume.yaml) | one-shot: setup → build every MACHINE in `$MACHINES` → exit | Docker-managed volumes |
+| [`docker-compose.build.mount.yaml`](docker-compose.build.mount.yaml)   | one-shot: setup → build every MACHINE in `$MACHINES` → exit | Bind-mounted host paths |
+| [`docker-compose.volume.yaml`](docker-compose.volume.yaml)             | long-running: setup → `sleep infinity` (SSH + exec)         | Docker-managed volumes |
+| [`docker-compose.mount.yaml`](docker-compose.mount.yaml)               | long-running: setup → `sleep infinity` (SSH + exec)         | Bind-mounted host paths |
 
-**Batch (`.build.` variants):** container starts, entrypoint runs
-`make image` for the given MACHINE, exits with bitbake's return code.
-The right pick for CI / farm workers / a single-shot Komodo stack that
-should tear itself down after the build.
+**Batch (`.build.` variants):** takes `MACHINES="dm900 dm920 …"`,
+loops sequentially. Ideal for CI / farm workers / one-off Komodo
+stacks. For the 4-containers × 50-MACHINEs pattern: deploy 4 stacks
+with different `-p` project names and disjoint MACHINEs subsets —
+MinIO glues them together at real time.
 
-**Dev (no `.build.` prefix):** container starts, entrypoint does its
-setup (`make update`, `conf/site.conf`, sstate + deploy symlinks),
-then idles on `sleep infinity`. Get a shell with
-`docker compose exec oea-build bash` and drive builds by hand
-(single-recipe rebuilds, `menuconfig`, iterative debug of a failing
-task, ...).
+**Dev (no `.build.` prefix):** takes single `MACHINE=dm900`, sets up
+the container, then idles. Attach via `docker compose exec oea-build
+bash` or `ssh -p 2222 builder@localhost` (password `builder`) and
+drive builds by hand.
 
-Every variant needs `MACHINE` set (one MACHINE per stack). See each
-file's header for the full env-var list. All variants join the
-external `oea-build` docker network so the MinIO-based sstate /
-downloads mirrors are reachable via hostname `minio`.
+All variants join the external `oea-build` docker network so MinIO
+is reachable via hostname `minio`. Volumes are per compose project
+(via `-p`) — different project names get independent storage.
 
 ## Composition
 

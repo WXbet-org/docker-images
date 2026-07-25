@@ -162,6 +162,13 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 # helper scripts assume bashisms and break under dash (Ubuntu default).
 RUN ln -sf bash /bin/sh
 
+# MinIO Client (mc) -- used by the entrypoint to sync sstate / sources /
+# deploy back to the shared MinIO after each MACHINE build. Not in
+# Ubuntu apt, fetch static binary from upstream.
+RUN curl -fsSL -o /usr/local/bin/mc \
+        https://dl.min.io/client/mc/release/linux-amd64/mc \
+ && chmod 0755 /usr/local/bin/mc
+
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 

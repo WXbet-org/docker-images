@@ -63,10 +63,14 @@ credentials above.
 
 ## First-time bucket setup
 
-Run the following once — creates the three buckets, sets
-anonymous-read on the two read-only mirrors, and adds a `builder`
-service user that the orchestrator uses to write back after each
-build.
+Buckets are named per (DISTRO, BRANCH) tuple for sstate + deploy, and
+one shared `sources` bucket for upstream tarballs (downloads are
+distro-agnostic). Create the trio for each (DISTRO, BRANCH) you
+build, and one `sources` bucket globally.
+
+Below is the setup for the current default `openatv/6.0`. Repeat
+the first three lines with a different `<DISTRO>-<BRANCH>` when you
+add a new distro or branch.
 
 Install `mc` (MinIO Client) locally, or run it in a throwaway
 container:
@@ -78,20 +82,25 @@ alias mc='docker run --rm --network oea-build -e MC_HOST_local=http://admin:<PW>
 Then:
 
 ```sh
-# Buckets
-mc mb local/sstate-openatv-6.0
-mc mb local/downloads
-mc mb local/deploy-openatv-6.0
+# Buckets for the openatv/6.0 combination
+DISTRO=openatv
+BRANCH=6.0
+mc mb "local/sstate-${DISTRO}-${BRANCH}"
+mc mb "local/deploy-${DISTRO}-${BRANCH}"
 
-# Anonymous read for the two mirrors so bitbake needs no credentials
-mc anonymous set download local/sstate-openatv-6.0
-mc anonymous set download local/downloads
+# Global sources bucket (only once, not per distro/branch)
+mc mb local/sources
 
-# `deploy` intentionally stays private -- if you publish it,
-# do it via a separate nginx sidecar that reads from a signed URL
-# or copies to a public bucket / rsync target.
+# Anonymous read for the two mirror buckets that bitbake pulls from
+mc anonymous set download "local/sstate-${DISTRO}-${BRANCH}"
+mc anonymous set download local/sources
 
-# Service user for post-build sync (orchestrator uses these creds)
+# `deploy-*` intentionally stays private -- if you publish it, do it
+# via a separate nginx sidecar that reads from a signed URL or copies
+# to a public bucket / rsync target.
+
+# Service user for the entrypoint's post-MACHINE sync (write access
+# to sstate + sources + deploy buckets)
 mc admin user add local builder <BUILDER_SECRET_KEY>
 mc admin policy attach local readwrite --user builder
 ```
@@ -99,57 +108,60 @@ mc admin policy attach local readwrite --user builder
 Verify:
 
 ```sh
-mc anonymous get local/sstate-openatv-6.0        # should say "download"
-mc admin user list local                          # should list `builder`
+mc anonymous get "local/sstate-${DISTRO}-${BRANCH}"   # -> "download"
+mc admin user list local                              # lists `builder`
 ```
 
 ## Consuming from build containers
 
 Build containers join the same network and reach MinIO by hostname.
-Wire it into the entrypoint via env-vars:
+The oea-buildsystem entrypoint reads two URLs for the read side and
+three credentials for the write side:
 
 ```sh
 docker run --rm \
     --network oea-build \
-    -e MACHINE=dm900 \
+    -e MACHINES="dm900 dm920" \
+    -e BRANCH=6.0 \
+    -e DISTRO=openatv \
     -e SSTATE_MIRROR_URL=http://minio:9000/sstate-openatv-6.0 \
-    -e DL_MIRROR_URL=http://minio:9000/downloads \
-    -v <ephemeral sstate volume>:/sstate-cache \
-    -v <shared deploy volume>:/deploy \
+    -e SOURCES_MIRROR_URL=http://minio:9000/sources \
+    -e MINIO_HOST=minio:9000 \
+    -e MINIO_ACCESS_KEY=builder \
+    -e MINIO_SECRET_KEY=<BUILDER_SECRET_KEY> \
+    -v oea_temp:/temp \
+    -v oea_sstate:/sstate-cache \
+    -v oea_sources:/sources \
+    -v oea_deploy:/deploy \
     ghcr.io/wxbet-org/oea-buildsystem:6.0
 ```
 
-Bitbake internally translates that into:
+Bitbake internally translates the two mirror URLs into:
 
 ```
 SSTATE_MIRRORS = "file://.* http://minio:9000/sstate-openatv-6.0/PATH"
-PREMIRRORS     = "<protocol>://.*/.*  http://minio:9000/downloads/"
+PREMIRRORS     = "<protocol>://.*/.*  http://minio:9000/sources/"
 ```
 
-(entrypoint writes those lines into `conf/site.conf` when the two
+(entrypoint writes those lines into `conf/site.conf` when the
 env-vars are set).
 
-## Post-build sync (from the orchestrator)
+## Post-MACHINE sync (from inside the container)
 
-After a successful build, the orchestrator (Argo / GHA / cron)
-syncs the container's local sstate + deploy back to MinIO. `mc
-mirror --overwrite --newer` is idempotent and only transfers deltas:
+The entrypoint does the sync itself after each MACHINE completes.
+For every MACHINE in `$MACHINES`:
 
-```sh
-# Uses builder-service-account credentials
-alias mc-writer='docker run --rm --network oea-build \
-    -e MC_HOST_local=http://builder:<BUILDER_SECRET>@minio:9000 \
-    -v <ephemeral sstate volume>:/sstate-cache:ro \
-    -v <shared deploy volume>:/deploy:ro \
-    minio/mc:latest'
-
-mc-writer mirror --overwrite --newer /sstate-cache/ local/sstate-openatv-6.0/
-mc-writer mirror --overwrite --newer /deploy/       local/deploy-openatv-6.0/
+```
+mc mirror --overwrite --newer /sstate-cache/   local/sstate-${DISTRO}-${BRANCH}/
+mc mirror --overwrite --newer /sources/        local/sources/
+# on success only:
+mc mirror --overwrite --newer /deploy/<MACHINE>/  local/deploy-${DISTRO}-${BRANCH}/<MACHINE>/
 ```
 
-Then the orchestrator prunes the ephemeral sstate-cache volume;
-`/deploy` can stay for the next `mc mirror` cycle or be cleared
-after fan-in.
+So warm sstate flows to MinIO in real time as MACHINEs finish, not
+at the end of a 50-MACHINE batch. A container that dies at MACHINE
+30/50 still leaves 29 MACHINEs worth of sstate + deploy on MinIO for
+the next attempt or other concurrent containers.
 
 ## Backup
 
