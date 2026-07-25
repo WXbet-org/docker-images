@@ -24,9 +24,11 @@ LABEL org.opencontainers.image.version="${BRANCH}"
 LABEL org.opencontainers.image.branch="${BRANCH}"
 
 # Owned by uid/gid 1000 which matches the `builder` user in the base
-# image. The tree is baked into /home/builder/ so users who `docker
-# exec` / SSH in land right at the Makefile and can `make MACHINE=…
-# image` from cwd. base's useradd -m already provides an empty
-# /home/builder/ from its layers; this layer merges the tree
-# contents into it.
-COPY --chown=1000:1000 repo/ /home/builder/
+# image. Tree lives at /home/builder/workspace/ (fixed path -- BRANCH is
+# encoded in the image tag, so no need to duplicate it in the
+# filesystem layout). Leaves /home/builder/ itself uncluttered for
+# the four volume mounts (temp, sstate-cache, sources, deploy) that
+# the entrypoint expects there. base's useradd -m provides
+# /home/builder/ from its layers; this layer adds the workspace/
+# subdir on top.
+COPY --chown=1000:1000 repo/ /home/builder/workspace/

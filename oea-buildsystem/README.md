@@ -159,7 +159,7 @@ Currently-running build is not interrupted; queued MACHINE(s) go next.
 
 Edit the stack's `MACHINES=…` env-var and `compose up -d` again —
 Docker recreates the container with the new list, entrypoint's state
-file (`/temp/.oea-last-machine`) is preserved so the resume logic
+file (`/home/builder/temp/.oea-last-machine`) is preserved so the resume logic
 picks the next matching MACHINE.
 
 ### Stop / pause
@@ -277,14 +277,14 @@ Full bucket setup + service account creation in
 Inside the container:
 
 ```sh
-cat /temp/.oea-last-machine        # last MACHINE that completed (OK or FAIL)
-cat /temp/.oea-failed-current      # MACHINEs failed this cycle, pending retry
-cat /temp/.oea-priority            # MACHINEs queued via `oea-retry`
+cat /home/builder/temp/.oea-last-machine        # last MACHINE that completed (OK or FAIL)
+cat /home/builder/temp/.oea-failed-current      # MACHINEs failed this cycle, pending retry
+cat /home/builder/temp/.oea-priority            # MACHINEs queued via `oea-retry`
 ```
 
 ### Bitbake cooker logs
 
-Per-MACHINE, timestamped, on the `/temp` volume:
+Per-MACHINE, timestamped, on the `oea_temp` volume:
 
 ```sh
 ls -1t /temp/<MACHINE>/log/cooker/<MACHINE>/*.log | head
@@ -298,7 +298,7 @@ comfortable navigation:
 
 ```sh
 ssh -p 2222 builder@<host>
-cd /temp/<MACHINE>/work/<PACKAGEARCH>/<recipe>/<version>-<PR>/
+cd /home/builder/temp/<MACHINE>/work/<PACKAGEARCH>/<recipe>/<version>-<PR>/
 mc
 ```
 
@@ -340,9 +340,12 @@ lookup:
 | `MINIO_SECRET_KEY` | *(unset)* | Corresponding secret key. |
 | `SSH_PORT` | `2222` | Host port for sshd. |
 
-Volumes: `/temp` (TMPDIR, per-MACHINE subdirs), `/sstate-cache`
-(local sstate), `/sources` (DL_DIR), `/deploy` (per-MACHINE
-artefacts). See base README for size expectations.
+Volumes: `/home/builder/temp` (TMPDIR, per-MACHINE subdirs),
+`/home/builder/sstate-cache` (local sstate), `/home/builder/sources`
+(DL_DIR), `/home/builder/deploy` (per-MACHINE artefacts). See base
+README for size expectations. Baked tree lives at
+`/home/builder/workspace/` — that's where `make MACHINE=... image`
+runs from.
 
 ## Notes for constrained hosts (WSL2, small VMs)
 

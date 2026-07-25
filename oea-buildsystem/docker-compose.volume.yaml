@@ -86,10 +86,10 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      - "oea_temp:/temp"
-      - "oea_sstate:/sstate-cache"
-      - "oea_sources:/sources"
-      - "oea_deploy:/deploy"
+      - "oea_temp:/home/builder/temp"
+      - "oea_sstate:/home/builder/sstate-cache"
+      - "oea_sources:/home/builder/sources"
+      - "oea_deploy:/home/builder/deploy"
 
     # Entrypoint runs its setup, then exec's this command as PID 1.
     # Container idles waiting for docker compose exec / SSH.

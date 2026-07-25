@@ -29,7 +29,7 @@ docker build -t oea-buildsystem-repo:6.0 --build-arg BRANCH=6.0 .
 
 `build-repo.sh` clones `oe-alliance/build-enviroment` recursively at
 the requested branch into a local `repo/` dir. Then `docker build`
-does a single `COPY repo/ /home/builder/` on top of `FROM scratch`. No
+does a single `COPY repo/ /home/builder/workspace/` on top of `FROM scratch`. No
 runtime metadata, no entrypoint — those come from the base image
 at composition time.
 

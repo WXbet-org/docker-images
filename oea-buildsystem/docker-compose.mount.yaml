@@ -74,10 +74,10 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      - "${TEMP_DIR:-/var/lib/oea-build/temp}:/temp"
-      - "${SSTATE_DIR:-/var/lib/oea-build/sstate}:/sstate-cache"
-      - "${SOURCES_DIR:-/var/lib/oea-build/sources}:/sources"
-      - "${DEPLOY_DIR:-/var/lib/oea-build/deploy}:/deploy"
+      - "${TEMP_DIR:-/var/lib/oea-build/temp}:/home/builder/temp"
+      - "${SSTATE_DIR:-/var/lib/oea-build/sstate}:/home/builder/sstate-cache"
+      - "${SOURCES_DIR:-/var/lib/oea-build/sources}:/home/builder/sources"
+      - "${DEPLOY_DIR:-/var/lib/oea-build/deploy}:/home/builder/deploy"
 
     command: ["sleep", "infinity"]
 

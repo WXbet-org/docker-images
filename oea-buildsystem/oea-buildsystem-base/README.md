@@ -63,16 +63,16 @@ docker build -t oea-buildsystem-base:dev --build-arg UBUNTU_TAG=22.04 .   # olde
 
 ## Test without composition
 
-Mount a local checkout of `build-enviroment` at `/home/builder` and get a shell
+Mount a local checkout of `build-enviroment` at `/home/builder/workspace` and get a shell
 to poke around:
 
 ```sh
 docker run --rm -it \
-    -v "/path/to/build-enviroment:/home/builder" \
-    -v oea-temp-test:/temp \
-    -v oea-sstate-test:/sstate-cache \
-    -v oea-sources-test:/sources \
-    -v oea-deploy-test:/deploy \
+    -v "/path/to/build-enviroment:/home/builder/workspace" \
+    -v oea-temp-test:/home/builder/temp \
+    -v oea-sstate-test:/home/builder/sstate-cache \
+    -v oea-sources-test:/home/builder/sources \
+    -v oea-deploy-test:/home/builder/deploy \
     -e MACHINES=dm900 \
     --entrypoint bash \
     oea-buildsystem-base:dev
@@ -83,11 +83,11 @@ cold, no sstate):
 
 ```sh
 docker run --rm \
-    -v "/path/to/build-enviroment:/home/builder" \
-    -v oea-temp-test:/temp \
-    -v oea-sstate-test:/sstate-cache \
-    -v oea-sources-test:/sources \
-    -v oea-deploy-test:/deploy \
+    -v "/path/to/build-enviroment:/home/builder/workspace" \
+    -v oea-temp-test:/home/builder/temp \
+    -v oea-sstate-test:/home/builder/sstate-cache \
+    -v oea-sources-test:/home/builder/sources \
+    -v oea-deploy-test:/home/builder/deploy \
     -e MACHINES=dm900 \
     -e DISTRO=openatv \
     -e DISTRO_TYPE=release \
@@ -99,32 +99,34 @@ docker run --rm \
 
 On container start:
 
-1. Runs `make update` in `/home/builder` — refreshes recipe submodules to their
+1. Runs `make update` in `/home/builder/workspace` — refreshes recipe submodules to their
    pinned tips.
-2. Writes `/home/builder/conf/site.conf` with `SSTATE_MIRRORS` / `PREMIRRORS`
+2. Writes `/home/builder/workspace/conf/site.conf` with `DL_DIR` / `SSTATE_DIR` + `SSTATE_MIRRORS` / `PREMIRRORS`
    lines if `SSTATE_MIRROR_URL` / `SOURCES_MIRROR_URL` are set.
-3. Symlinks the shared bitbake output paths onto the mounted volumes:
-   - `builds/$DISTRO/sstate-cache` → `/sstate-cache`
-   - `builds/$DISTRO/downloads` → `/sources`
+3. `chown`s the four volume mount roots (`/home/builder/temp`,
+   `/home/builder/sstate-cache`, `/home/builder/sources`,
+   `/home/builder/deploy`) if they're not already writable by
+   `builder` — Docker-managed volumes initialize root-owned;
+   host-side bind-mounts already at uid 1000 skip this cleanly.
 4. Starts `sshd` on port 22 (host keys ephemeral, one-time client
    warning per container recreate). Login: `builder` / `builder`.
 5. If a `command:` was passed (dev stacks pass `sleep infinity`),
    `exec`s it here and skips the build loop. Otherwise:
 6. Determines the resume point:
    - `SKIP_TO_MACHINE=<name>` → force that as start
-   - else state file `/temp/.oea-last-machine` → resume with next
+   - else state file `/home/builder/temp/.oea-last-machine` → resume with next
    - else start at first MACHINE in `$MACHINES`
 7. Enters an **infinite** round-robin loop through `$MACHINES`. For
    each MACHINE `$M`:
    - Symlinks per-MACHINE paths: `builds/$DISTRO/$DISTRO_TYPE/$M/tmp`
-     → `/temp/$M`, then `/temp/$M/deploy` → `/deploy/$M`.
+     → `/home/builder/temp/$M`, then `/home/builder/temp/$M/deploy` → `/home/builder/deploy/$M`.
    - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
    - If MinIO write creds are set: `mcli mirror` sstate + sources
      (success or fail — the intermediate blobs are useful either
      way). Deploy is NOT mirrored — artefacts stay on the shared
      `oea_deploy` volume for a downstream publishing job.
    - If bitbake exited cleanly (RC=0 or hard fail): writes `$M` to
-     `/temp/.oea-last-machine` so the next cycle passes this MACHINE.
+     `/home/builder/temp/.oea-last-machine` so the next cycle passes this MACHINE.
    - If bitbake exited because of a SIGTERM we forwarded to it (see
      stop semantics below): does NOT write the state file, then exits
      0 cleanly. Next start resumes AT this MACHINE.
@@ -187,10 +189,10 @@ this MACHINE from the last completed task stamp.
 
 | Path | Purpose | Typical size |
 |------|---------|--------------|
-| `/temp` | TMPDIR — per-MACHINE subdirs (`/temp/$M/work`, `/temp/$M/sysroots-*`, `/temp/$M/stamps`). Persistent so a killed container's build state survives for debug. | 50-200 GB across all MACHINEs |
-| `/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mcli mirror` after each MACHINE. | 5-50 GB |
-| `/sources` | DL_DIR — upstream source tarballs, shared across MACHINEs. Same read/write flow as sstate. | 2-20 GB |
-| `/deploy` | Deploy artefacts (kernel, rootfs, `.ipk` feeds) per-MACHINE subdir (`/deploy/$M/`). Shared external volume `oea_deploy` on the host; published downstream (feed hosting, rsync) by a separate job. Not synced to MinIO. | 1-10 GB per MACHINE |
+| `/home/builder/temp` | TMPDIR — per-MACHINE subdirs (`/home/builder/temp/$M/work`, `/home/builder/temp/$M/sysroots-*`, `/home/builder/temp/$M/stamps`). Persistent so a killed container's build state survives for debug. | 50-200 GB across all MACHINEs |
+| `/home/builder/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mcli mirror` after each MACHINE. | 5-50 GB |
+| `/home/builder/sources` | DL_DIR — upstream source tarballs, shared across MACHINEs. Same read/write flow as sstate. | 2-20 GB |
+| `/home/builder/deploy` | Deploy artefacts (kernel, rootfs, `.ipk` feeds) per-MACHINE subdir (`/home/builder/deploy/$M/`). Shared external volume `oea_deploy` on the host; published downstream (feed hosting, rsync) by a separate job. Not synced to MinIO. | 1-10 GB per MACHINE |
 
 ## When to rebuild this image
 
@@ -206,7 +208,7 @@ Two different `mc` tools show up here:
 
 - **`mc`** (from apt) — [Midnight Commander](https://midnight-commander.org),
   the terminal file manager. Useful when you `ssh -p 2222 builder@…`
-  into a running container to poke around `/temp/<MACHINE>/work/…`.
+  into a running container to poke around `/home/builder/temp/<MACHINE>/work/…`.
 - **`mcli`** (curl'd from `dl.min.io`) — MinIO Client, used by the
   entrypoint for post-MACHINE sync. Installed under this alternate
   name (documented by MinIO) precisely to avoid clashing with

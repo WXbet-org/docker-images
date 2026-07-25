@@ -96,10 +96,10 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      - "oea_temp:/temp"
-      - "oea_sstate:/sstate-cache"
-      - "oea_sources:/sources"
-      - "oea_deploy:/deploy"
+      - "oea_temp:/home/builder/temp"
+      - "oea_sstate:/home/builder/sstate-cache"
+      - "oea_sources:/home/builder/sources"
+      - "oea_deploy:/home/builder/deploy"
 
     # Host prerequisites (see oea-buildsystem-base/README.md):
     #   kernel.apparmor_restrict_unprivileged_userns=0

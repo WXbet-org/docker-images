@@ -33,17 +33,20 @@
 #     MINIO_ACCESS_KEY    service-account access key
 #     MINIO_SECRET_KEY    service-account secret key
 #
-# Volumes (expected, all writable):
-#   /temp                 TMPDIR per MACHINE (work, sysroots, stamps) -- huge
-#   /sstate-cache         local sstate cache -- warmed from SSTATE_MIRROR_URL on miss
-#   /sources              DL_DIR -- warmed from SOURCES_MIRROR_URL on miss
-#   /deploy               deploy artefacts per MACHINE (kernel, rootfs, feeds)
+# Volumes (expected, all writable, mounted directly under $HOME):
+#   /home/builder/temp          TMPDIR per MACHINE (work, sysroots, stamps) -- huge
+#   /home/builder/sstate-cache  local sstate cache -- warmed from SSTATE_MIRROR_URL on miss
+#   /home/builder/sources       DL_DIR -- warmed from SOURCES_MIRROR_URL on miss
+#   /home/builder/deploy        deploy artefacts per MACHINE (kernel, rootfs, feeds)
+#
+# Tree is baked into /home/builder/workspace/ by the repo image; entrypoint
+# cd's there before running make.
 #
 # How the volumes are wired to bitbake:
-#   /sstate-cache      set as SSTATE_DIR in site.conf (hard override)
-#   /sources           set as DL_DIR     in site.conf (hard override)
-#   /temp/$M           per-MACHINE tmp/  symlinked at loop-iteration setup
-#   /deploy/$M         per-MACHINE deploy symlinked inside /temp/$M/deploy
+#   /home/builder/sstate-cache      as SSTATE_DIR in site.conf (hard override)
+#   /home/builder/sources           as DL_DIR     in site.conf (hard override)
+#   /home/builder/temp/$M           per-MACHINE tmp/, symlinked in loop iteration
+#   /home/builder/deploy/$M         per-MACHINE deploy, symlinked inside temp/$M/deploy
 #
 # Exit code: 0 if every MACHINE succeeded, 1 if any failed. Fail
 # report at the end lists which MACHINEs and their ERROR: markers.
@@ -69,30 +72,21 @@ echo "    SOURCES_MIRROR_URL = ${SOURCES_MIRROR_URL:-<unset>}"
 echo "    MINIO_HOST         = ${MINIO_HOST:-<unset>}"
 echo "================================================================="
 
-cd /home/builder
+cd /home/builder/workspace
 
-# --- 1b. Ensure mount roots are writable by builder --------------------
+# --- 1b. Ensure volume mount roots are writable by builder -------------
 # Docker-managed named volumes initialize their mount root as root:root
 # when the volume is first attached to a container. The builder user
 # (uid 1000) can't write there without a one-time chown. Bind-mounts
 # from an already-1000-owned host path skip this cleanly (the [ ! -w ]
 # check is false). Only the top-level dir is chowned -- avoids a slow
-# recursive chown over a 200 GB /temp.
-for d in /temp /sstate-cache /sources /deploy; do
+# recursive chown over a 200 GB temp/.
+for d in /home/builder/temp /home/builder/sstate-cache /home/builder/sources /home/builder/deploy; do
     if [ -d "$d" ] && [ ! -w "$d" ]; then
         echo ">>> chown $d (mount root not writable by builder)"
         sudo chown builder:builder "$d"
     fi
 done
-
-# --- 1c. Discoverability symlinks in $HOME -----------------------------
-# When users SSH in they land in /home/builder. Symlink the four
-# volumes here as convenient shortcuts so `ls` shows everything and
-# `cd tmp/dm900/work/...` works without knowing the root paths.
-ln -sfn /temp         /home/builder/tmp
-ln -sfn /sstate-cache /home/builder/sstate-cache
-ln -sfn /sources      /home/builder/sources
-ln -sfn /deploy       /home/builder/deploy
 
 # --- 2. git identity ---------------------------------------------------
 git config --global --get user.email >/dev/null 2>&1 \
@@ -114,8 +108,8 @@ mkdir -p conf
 cat > conf/site.conf <<'EOF'
 # Managed by oea-buildsystem entrypoint -- do not edit by hand.
 # Pin the two shared cross-MACHINE caches onto our mounted volumes.
-DL_DIR     = "/sources"
-SSTATE_DIR = "/sstate-cache"
+DL_DIR     = "/home/builder/sources"
+SSTATE_DIR = "/home/builder/sstate-cache"
 EOF
 if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
     echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\"" >> conf/site.conf
@@ -141,9 +135,9 @@ if [ -s conf/site.conf ]; then
     sed 's/^/    /' conf/site.conf
 fi
 
-# --- 5. (no shared symlinks -- DL_DIR + SSTATE_DIR are hard-set to
-#         /sources + /sstate-cache in site.conf above, so bitbake
-#         writes directly to those volumes without any indirection.)
+# --- 5. (no shared symlinks -- DL_DIR + SSTATE_DIR are hard-set in
+#         site.conf above, so bitbake writes directly to those
+#         volumes without indirection.)
 
 # --- 6. sshd -----------------------------------------------------------
 if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
@@ -184,7 +178,7 @@ fi
 # State file survives container restarts (lives on /temp volume).
 # Records the LAST completed MACHINE so we can resume from the next
 # one on restart, giving pause/stop-and-continue semantics.
-STATE_FILE="/temp/.oea-last-machine"
+STATE_FILE="/home/builder/temp/.oea-last-machine"
 MACHINES_ARR=($MACHINES)
 N=${#MACHINES_ARR[@]}
 
@@ -238,9 +232,9 @@ trap handle_stop TERM INT
 #   natural round-robin iteration.
 # Failed-in-cycle queue: MACHINEs that failed during the current cycle
 #   get one auto-retry pass at end-of-cycle, before starting the next.
-PRIORITY_QUEUE=/temp/.oea-priority
-FAILED_QUEUE=/temp/.oea-failed-current
-mkdir -p /temp
+PRIORITY_QUEUE=/home/builder/temp/.oea-priority
+FAILED_QUEUE=/home/builder/temp/.oea-failed-current
+mkdir -p /home/builder/temp
 : > "$FAILED_QUEUE"    # start fresh each container start
 
 # --- 11. build_machine() helper ---------------------------------------
@@ -260,10 +254,10 @@ build_machine() {
     local BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
     mkdir -p "$BUILD_DIR"
     rm -rf "$BUILD_DIR/tmp"
-    mkdir -p "/temp/$M" "/deploy/$M"
-    ln -s "/temp/$M" "$BUILD_DIR/tmp"
-    rm -rf "/temp/$M/deploy"
-    ln -s "/deploy/$M" "/temp/$M/deploy"
+    mkdir -p "/home/builder/temp/$M" "/home/builder/deploy/$M"
+    ln -s "/home/builder/temp/$M" "$BUILD_DIR/tmp"
+    rm -rf "/home/builder/temp/$M/deploy"
+    ln -s "/home/builder/deploy/$M" "/home/builder/temp/$M/deploy"
 
     # Run make in its own process group so the SIGTERM handler can
     # signal the whole tree (make + bitbake workers).
