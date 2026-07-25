@@ -72,14 +72,33 @@ Below is the setup for the current default `openatv/6.0`. Repeat
 the first three lines with a different `<DISTRO>-<BRANCH>` when you
 add a new distro or branch.
 
-Install `mc` (MinIO Client) locally, or run it in a throwaway
-container:
+You have three options for running `mc` for the setup:
+
+**A) Inside the running minio container** (simplest — `mc` is
+already there, and `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` env-vars
+are visible so you don't have to type the password):
+
+```sh
+docker exec -it minio sh          # or Komodo -> Container -> Console
+# then, once inside:
+export MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000"
+mc admin info local                # sanity check -- should show server status
+```
+
+**B) Throwaway `mc` container on the same docker network**
+(useful when you don't want to `exec` into minio):
 
 ```sh
 alias mc='docker run --rm --network oea-build -e MC_HOST_local=http://admin:<PW>@minio:9000 minio/mc:latest'
 ```
 
-Then:
+**C) `mc` installed locally** — configure the alias explicitly:
+
+```sh
+mc alias set local http://<host>:9000 admin <PW>
+```
+
+Then all three variants share the same command syntax:
 
 ```sh
 # Buckets for the openatv/6.0 combination
