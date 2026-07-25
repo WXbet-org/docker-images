@@ -432,7 +432,7 @@ Minimal setup:
 1. **Feed indexes** (`Packages` / `Packages.gz` / `Release` + `Release.gpg` when signing is on) are written **automatically** as part of `make image`. Specifically, `do_rootfs` in [`oe/rootfs.py:650`](https://git.openembedded.org/openembedded-core/tree/meta/lib/oe/rootfs.py?h=pyro) calls `pm.write_index()` on the DEB package manager, which invokes the `DpkgIndexer` — the same code path that `bitbake package-index` runs — over the entire `tmp/deploy/deb/` tree. So after `make image`, the feed is already index-ready on disk.
 
     You only need `MACHINE=<machine> make package-index` explicitly when you built individual packages with `bitbake <pkg>` (no `do_rootfs` → no auto-refresh) and want the indexes updated without a full image rebuild.
-2. **Publish** the entire `tmp/deploy/deb/` tree over HTTP — nginx / apache / caddy / any static file server does the job. Match the URL layout to `DISTRO_FEED_URI`, so `<host>/opendreambox/2.6/unstable/<PR>/<MACHINE>/` resolves to the corresponding `deploy/deb/<PACKAGEARCH>/` directory (a bit of `rewrite` / symlink glue is usually needed — every host layouts this differently).
+2. **Publish** the entire `tmp/deploy/deb/` tree over HTTP — nginx / apache / caddy / any static file server does the job. Match the URL layout to `DISTRO_FEED_URI`, so `<host>/opendreambox/<distro-version>/unstable/<PR>/<MACHINE>/` (e.g. `.../opendreambox/2.5/unstable/…` for a krogoth-based box like `dm900`, `.../opendreambox/2.6/unstable/…` for a pyro-based box like `dreamtwo`) resolves to the corresponding `deploy/deb/<PACKAGEARCH>/` directory (a bit of `rewrite` / symlink glue is usually needed — every host layouts this differently).
 3. **Point `DISTRO_FEED_URI`** at your host, rebuild the image, install → the receiver's `/etc/apt/sources.list.d/*.list` now references your URL.
 4. **If signing is enabled**: distribute the public key (`gpg --armor --export > pubkey.asc`) to receivers. On the STB: `apt-key add pubkey.asc` (or bake the key into the image via a custom recipe by dropping the armored key into `/etc/apt/trusted.gpg.d/`).
 
@@ -441,7 +441,9 @@ Common workflow after each image build:
 ```sh
 MACHINE=dm900 make image
 # Feed indexes are already written under build/dm900/tmp/deploy/deb/
-rsync -a build/dm900/tmp/deploy/deb/ user@feedhost:/var/www/opendreambox/2.6/unstable/
+# dm900 is krogoth → 2.5. For a pyro machine (dreamone/dreamtwo)
+# use `.../opendreambox/2.6/unstable/` instead.
+rsync -a build/dm900/tmp/deploy/deb/ user@feedhost:/var/www/opendreambox/2.5/unstable/
 ```
 
 Deeper background from the Yocto Project reference manual (same mechanism, all OE-based distros): <https://docs.yoctoproject.org/dev-manual/packages.html#creating-and-using-a-package-feed>.
