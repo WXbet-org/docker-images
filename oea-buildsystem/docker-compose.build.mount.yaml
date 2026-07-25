@@ -40,7 +40,13 @@
 #     DISTRO_TYPE=release             (default: release)
 #     ACTION=image                    make target     (default: image)
 #     SKIP_TO_MACHINE=vuduo4k         force first-cycle start (overrides state file)
-#     SSH_PORT=2323                   host port for sshd (default: 2222)
+#     STACK=a                         host-unique tag for container_name /
+#                                     hostname (default: a). Set 'b', 'c', ...
+#                                     when running multiple batch stacks on
+#                                     the same host so names don't collide.
+#     SSH_PORT=2323                   host port for sshd (default: 2222).
+#                                     MUST also be unique across stacks on
+#                                     the same host -- 2223, 2224, ...
 #
 #   MinIO integration (all optional):
 #     SSTATE_MIRROR_URL=...
@@ -52,8 +58,8 @@
 services:
   oea-build:
     image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
-    container_name: oea-build-auto
-    hostname: oea-build-auto
+    container_name: oea-build-auto-${STACK:-a}
+    hostname: oea-build-auto-${STACK:-a}
 
     networks:
       - oea-build

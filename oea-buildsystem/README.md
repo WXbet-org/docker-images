@@ -176,17 +176,25 @@ picks the next matching MACHINE.
 - **`docker compose down`** — stop + remove containers. Volumes
   persist, so `up` on the same project name resumes clean.
 
-## Farm pattern: 4 hosts × 50 MACHINEs
+## Farm pattern: multiple parallel stacks
 
-Split the 200-MACHINE workload across 4 farm nodes; each node runs
-a batch stack with a disjoint slice of the list. All four write to
-the same MinIO buckets, so warm sstate flows between them in real
-time via the per-MACHINE sync.
+Split a MACHINE workload across N stacks. Two axes:
 
-On each host:
+- **Same host, multiple stacks** — set `STACK=a`, `STACK=b`, ...
+  to keep container names + hostnames unique (they template to
+  `oea-build-auto-${STACK:-a}`). Also unique `SSH_PORT` per stack
+  since ports are host-scoped. Different `-p` project names for
+  isolated per-project volumes (temp + sstate).
+- **Multi-host farm** — every host runs one (or more) stacks. Host
+  scope avoids container-name collision automatically, but you
+  still want distinct `STACK` values for meaningful `docker ps`
+  output. MinIO ties them together.
+
+### 4 parallel stacks on 4 hosts
 
 ```sh
 # Host 1
+STACK=a \
 MACHINES="$(cat machines/farm-a.txt)" \
 MINIO_HOST=minio.internal:9000 \
 MINIO_ACCESS_KEY=builder \
@@ -195,10 +203,26 @@ SSTATE_MIRROR_URL=http://minio.internal:9000/sstate-openatv-6.0 \
 SOURCES_MIRROR_URL=http://minio.internal:9000/sources \
 docker compose -p oea-a -f docker-compose.build.volume.yaml up -d
 
-# Host 2  → same but with -p oea-b and machines/farm-b.txt
-# Host 3  → -p oea-c
-# Host 4  → -p oea-d
+# Host 2 → STACK=b + -p oea-b + machines/farm-b.txt
+# Host 3 → STACK=c + -p oea-c
+# Host 4 → STACK=d + -p oea-d
 ```
+
+### 2 stacks on ONE beefy host
+
+```sh
+# Stack a
+STACK=a SSH_PORT=2222 MACHINES="dm900 dm920" \
+    docker compose -p oea-a -f docker-compose.build.volume.yaml up -d
+
+# Stack b (distinct STACK + distinct SSH_PORT!)
+STACK=b SSH_PORT=2223 MACHINES="vuduo4k gbquad4k" \
+    docker compose -p oea-b -f docker-compose.build.volume.yaml up -d
+```
+
+Container names: `oea-build-auto-a` and `oea-build-auto-b`. Both
+share the external `oea_sources` + `oea_deploy` volumes on the
+host; per-stack `oea_temp` + `oea_sstate` stay isolated.
 
 Each stack cycles its own subset independently. When host A finishes
 `qtbase-native` for `dm900`, the resulting sstate blob is on MinIO
