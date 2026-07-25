@@ -229,8 +229,8 @@ For every MACHINE in `$MACHINES`, whether the build succeeded or
 failed:
 
 ```
-mcli mirror --overwrite --newer /sstate-cache/   local/sstate-${DISTRO}-${BRANCH}/
-mcli mirror --overwrite --newer /sources/        local/sources/
+mcli mirror --overwrite /sstate-cache/   local/sstate-${DISTRO}-${BRANCH}/
+mcli mirror --overwrite /sources/        local/sources/
 ```
 
 So warm sstate + fetched sources flow to MinIO in real time as

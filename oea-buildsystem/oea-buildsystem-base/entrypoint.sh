@@ -292,9 +292,9 @@ build_machine() {
     # separate downstream job (feed hosting, rsync, ...).
     if [ "$MC_ENABLED" = "1" ]; then
         echo ">>> mcli mirror sstate + sources -> MinIO"
-        mcli mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
+        mcli mirror --overwrite /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
             || echo "!!! sstate sync failed (continuing)"
-        mcli mirror --overwrite --newer /sources/      "local/sources/" \
+        mcli mirror --overwrite /sources/      "local/sources/" \
             || echo "!!! sources sync failed (continuing)"
     fi
 
