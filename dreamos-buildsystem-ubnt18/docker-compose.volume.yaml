@@ -28,15 +28,15 @@
 # (run before `docker compose up -d` the first time). The volume name
 # takes the project prefix from the containing directory; adjust it if
 # you deploy this compose under a different project name:
-#   docker volume create dreamos-buildsystem-ubnt18_dreamos_builds
+#   docker volume create dreamos-buildsystem-ubnt18_dreamos_build_data
 #   docker run --rm \
 #       -v "$HOME/dreamos-builds:/from" \
-#       -v dreamos-buildsystem-ubnt18_dreamos_builds:/to \
+#       -v dreamos-buildsystem-ubnt18_dreamos_build_data:/to \
 #       alpine ash -c 'cp -a /from/. /to/'
 #
 # Back up the volume to a tarball:
 #   docker run --rm \
-#       -v dreamos-buildsystem-ubnt18_dreamos_builds:/data:ro \
+#       -v dreamos-buildsystem-ubnt18_dreamos_build_data:/data:ro \
 #       -v "$PWD":/backup \
 #       alpine tar czf /backup/dreamos-builds-backup.tgz -C /data .
 
@@ -54,7 +54,7 @@ services:
       # Docker-managed named volume -- portable, no host-path assumptions.
       # Stored in the Docker daemon's own filesystem, no cross-boundary
       # I/O overhead.
-      - dreamos_builds:/home/builder
+      - dreamos_build_data:/home/builder
 
     environment:
       # First container start auto-clones the 4 standard BuildEnvs
@@ -82,8 +82,8 @@ services:
 
 volumes:
   # Named volume backing /home/builder. Docker stores it under
-  # /var/lib/docker/volumes/<project>_dreamos_builds/_data/. The
+  # /var/lib/docker/volumes/<project>_dreamos_build_data/_data/. The
   # <project>_ prefix is only added when this compose is launched as a
   # project (`docker compose ...`); a raw `docker run --volume
-  # dreamos_builds:...` uses the bare name.
-  dreamos_builds:
+  # dreamos_build_data:...` uses the bare name.
+  dreamos_build_data:

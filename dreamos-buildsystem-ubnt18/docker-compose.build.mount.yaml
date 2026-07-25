@@ -32,10 +32,10 @@
 #                                # entirely (default: ${HOME}/dreamos-builds).
 
 services:
-  dreamos-build:
+  dreamos-build-auto:
     image: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:${TAG:-latest}
-    container_name: dreamos-build
-    hostname: dreamos-build
+    container_name: dreamos-build-auto
+    hostname: dreamos-build-auto
 
     ports:
       # sshd is started by the entrypoint; port 22 inside -> host SSH_PORT.
@@ -83,7 +83,7 @@ services:
       - -c
       - |
         echo "===================================================="
-        echo "  dreamos-build: $${FORK} / $${BRANCH}"
+        echo "  dreamos-build-auto: $${FORK} / $${BRANCH}"
         echo "  MACHINES: $${MACHINES}"
         echo "===================================================="
         # Idempotent: fast if the BuildEnv already exists.

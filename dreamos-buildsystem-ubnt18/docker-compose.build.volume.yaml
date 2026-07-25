@@ -32,17 +32,18 @@
 #   BRANCH=krogoth               # any branch of the fork       (default: krogoth)
 #   MACHINES="dm900 dm920"       # space-separated list         (default: dm900)
 #
-# Volume: a dedicated named volume so parallel long-running dev containers
-# on the same host don't race on the same tmp-glibc/work tree. If you
-# want to reuse an existing volume's checkouts and sources instead,
-# uncomment the external/name lines at the bottom of this file and point
-# them at the target volume (e.g. dreamos-builder_dreamos_builds).
+# Volume: same named volume as docker-compose.volume.yaml (the
+# long-running dev variant). Batch and dev inherit each other's warm
+# checkouts / sources / sstate. Do NOT run this stack while the dev
+# stack is also up on the same host -- bitbake will race on
+# tmp-glibc/work. To point this stack at a different volume, add
+# `external: true` and `name: <your-volume>` under the volume entry.
 
 services:
-  dreamos-build:
+  dreamos-build-auto:
     image: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:${TAG:-latest}
-    container_name: dreamos-build
-    hostname: dreamos-build
+    container_name: dreamos-build-auto
+    hostname: dreamos-build-auto
 
     ports:
       # sshd is started by the entrypoint; port 22 inside -> host SSH_PORT.
@@ -80,7 +81,7 @@ services:
       - -c
       - |
         echo "===================================================="
-        echo "  dreamos-build: $${FORK} / $${BRANCH}"
+        echo "  dreamos-build-auto: $${FORK} / $${BRANCH}"
         echo "  MACHINES: $${MACHINES}"
         echo "===================================================="
         # Idempotent: fast if the BuildEnv already exists.
@@ -152,12 +153,9 @@ services:
         hard: 65536
 
 volumes:
+  # Shared with docker-compose.volume.yaml -- batch inherits dev's
+  # warm checkouts / sources / sstate and vice versa. To point this
+  # stack at a different volume, uncomment the lines below.
   dreamos_build_data:
-    # To reuse an existing long-running stack's data (checkouts, sources,
-    # sstate cache) instead of a fresh dedicated volume, uncomment these
-    # two lines and point `name:` at the target volume. Do NOT run this
-    # stack while the long-running container is also up on the same
-    # volume -- bitbake will race on tmp-glibc/work.
-    #
     # external: true
-    # name: dreamos-builder_dreamos_builds
+    # name: <target-volume-name>
