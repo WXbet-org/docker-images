@@ -49,8 +49,10 @@ echo 'fs.inotify.max_user_watches = 524288' \
 sudo sysctl --system
 ```
 
-Or per-container: `docker run --sysctl fs.inotify.max_user_watches=524288 ...`
-(equivalent `sysctls:` block in compose).
+**Host-only, no per-container fallback.** `fs.inotify.*` is a
+kernel-wide (non-namespaced) sysctl — runc refuses `--sysctl` /
+compose `sysctls:` for it with `"is not in a separate kernel
+namespace"`. The value has to be raised on the host.
 
 ## Build
 

@@ -99,8 +99,6 @@ services:
     #   fs.inotify.max_user_watches=524288
     security_opt:
       - apparmor=unconfined
-    sysctls:
-      fs.inotify.max_user_watches: 524288
 
     ulimits:
       nofile:
