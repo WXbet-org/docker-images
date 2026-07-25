@@ -35,7 +35,7 @@ env:
   BASE_IMAGE:    ghcr.io/wxbet-org/dreamos-buildsystem-base
   SOURCES_IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-sources
   UBNT18_IMAGE:  ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
-  BASE_DIR:      dreamos-buildsystem-base
+  BASE_DIR:      dreamos-buildsystem-ubnt18/dreamos-buildsystem-base
   UBNT18_DIR:    dreamos-buildsystem-ubnt18
   TAG_PREFIX:    dreamos-buildsystem-ubnt18/
 

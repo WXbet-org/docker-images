@@ -83,8 +83,8 @@ env:
   BASE_IMAGE:  ghcr.io/wxbet-org/oea-buildsystem-base
   REPO_IMAGE:  ghcr.io/wxbet-org/oea-buildsystem-repo
   COMP_IMAGE:  ghcr.io/wxbet-org/oea-buildsystem
-  BASE_DIR:    oea-buildsystem-base
-  REPO_DIR:    oea-buildsystem-repo
+  BASE_DIR:    oea-buildsystem/oea-buildsystem-base
+  REPO_DIR:    oea-buildsystem/oea-buildsystem-repo
   COMP_DIR:    oea-buildsystem
   TAG_PREFIX:  oea-buildsystem/
 

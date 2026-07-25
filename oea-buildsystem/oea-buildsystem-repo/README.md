@@ -9,7 +9,7 @@ image's entrypoint can `make update` at container start.
 
 Not runnable on its own. Meant to be composed on ghcr with
 [`oea-buildsystem-base`](../oea-buildsystem-base) into the final
-[`oea-buildsystem:<branch>`](../oea-buildsystem) image — that's
+[`oea-buildsystem:<branch>`](..) image — that's
 what consumers actually pull and run.
 
 ## Tag scheme

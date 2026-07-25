@@ -14,7 +14,7 @@ below.
 **Content only.** No source tree lives in this image — that's the job of
 [`oea-buildsystem-repo`](../oea-buildsystem-repo). At release time the
 two get composed on ghcr into the consumable
-[`oea-buildsystem:<branch>`](../oea-buildsystem) image (same pattern as
+[`oea-buildsystem:<branch>`](..) image (same pattern as
 `dreamos-buildsystem-ubnt18`).
 
 ## Host prerequisites

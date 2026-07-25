@@ -1,6 +1,6 @@
 # dreamos-buildsystem-sources
 
-Data-only container image. Contains a snapshot of the OE downloads pool (~11 GB) at `/opt/dl-mirror`. Consumed by other images (e.g. [`dreamos-buildsystem-ubnt18`](../dreamos-buildsystem-ubnt18/README.md)) as their `FROM` base — the layer is inherited by digest reference, so the 11 GB is stored **once** in the registry no matter how many downstream images use it.
+Data-only container image. Contains a snapshot of the OE downloads pool (~11 GB) at `/opt/dl-mirror`. Consumed by other images (e.g. [`dreamos-buildsystem-ubnt18`](../README.md)) as their `FROM` base — the layer is inherited by digest reference, so the 11 GB is stored **once** in the registry no matter how many downstream images use it.
 
 ## Purpose
 
@@ -45,7 +45,7 @@ cd ~/docker-images/dreamos-buildsystem-sources
 
 # 3. Rebuild the toolchain image so it picks up the new sources layer
 #    (its FROM base now resolves to a different digest).
-cd ../dreamos-buildsystem-ubnt18
+cd ..
 ./build.sh
 ```
 

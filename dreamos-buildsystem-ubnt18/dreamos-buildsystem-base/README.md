@@ -2,7 +2,7 @@
 
 Toolchain-only image for opendreambox builds: Ubuntu 18.04 + Ubuntu Pro (ESM) + full OE toolchain (gcc-6.5, Python 2.7 + 3.6, bison/flex/cmake/... + entrypoint/user setup) — **without** the ~11 GB OE downloads snapshot.
 
-This image alone is **not** enough for a full opendreambox build (no `/opt/dl-mirror`). It's the bottom half of the split; the sources snapshot is the top half; the two are combined server-side on ghcr into the consumable [`dreamos-buildsystem-ubnt18`](../dreamos-buildsystem-ubnt18/README.md) image.
+This image alone is **not** enough for a full opendreambox build (no `/opt/dl-mirror`). It's the bottom half of the split; the sources snapshot is the top half; the two are combined server-side on ghcr into the consumable [`dreamos-buildsystem-ubnt18`](../README.md) image.
 
 ## Why split at all
 
@@ -14,7 +14,7 @@ No consumer sees this image directly. They pull `dreamos-buildsystem-ubnt18`.
 
 ## Prerequisites
 
-Same as before: Docker + BuildKit, Ubuntu Pro token in `pro-attach-config.yaml`. See [`../dreamos-buildsystem-ubnt18/README.md`](../dreamos-buildsystem-ubnt18/README.md) for details.
+Same as before: Docker + BuildKit, Ubuntu Pro token in `pro-attach-config.yaml`. See [`../README.md`](../README.md) for details.
 
 ## Build
 

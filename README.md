@@ -8,7 +8,7 @@ matches what you want to build and follow its README:
 
 | Build system | Target | Details |
 |---|---|---|
-| [**oea-buildsystem**](oea-buildsystem/README.md) | OpenATV (and any other distro built from `oe-alliance/build-enviroment`) | Continuous MACHINE-loop containers, four ready-made compose stacks (batch loop × dev × mount × volume). Uses [**minio**](minio/README.md) (part of this stack, deploy-once-per-farm) as shared sstate / sources / deploy cache. |
+| [**oea-buildsystem**](oea-buildsystem/README.md) | OpenATV (and any other distro built from `oe-alliance/build-enviroment`) | Continuous MACHINE-loop containers, four ready-made compose stacks (batch loop × dev × mount × volume). Uses [**minio**](oea-buildsystem/minio/README.md) (part of this stack, deploy-once-per-farm) as shared sstate / sources / deploy cache. |
 | [**dreamos-buildsystem-ubnt18**](dreamos-buildsystem-ubnt18/README.md) | opendreambox / dreamlegacy (krogoth + pyro) | Reproducible Ubuntu 18.04 + Pro/ESM toolchain with a baked-in ~11 GB `/opt/dl-mirror` sources snapshot. Package-feed hosting, signing, and multi-MACHINE compose variants. |
 | [**simplebuild4**](simplebuild4/README.md) | s4 build system TUI (source in GitLab) | Container-packaged release triggered from the GitLab s4 repo via `repository_dispatch`. |
 
@@ -108,15 +108,15 @@ provides SSH-into-container terminals. See Komodo's own docs for setup.
 
 ```
 .
-├── oea-buildsystem-base/         Base image for oea (Dockerfile + entrypoint + oea-retry)
-├── oea-buildsystem-repo/         Content image with build-enviroment tree (FROM scratch)
-├── oea-buildsystem/              Consumable image landing (compose.sh + 4 compose files + README)
-├── dreamos-buildsystem-base/     Base image for dreamos (toolchain-only)
-├── dreamos-buildsystem-sources/  Data image for dreamos (baked-in dl-mirror)
-├── dreamos-buildsystem-ubnt18/   Consumable image landing (compose.sh + compose files + README)
-├── simplebuild4/                 s4 packaging (Dockerfile + compose)
-├── minio/                        Shared object-store stack (docker-compose + README)
-└── .github/workflows/            Release CI for each build system + weekly ghcr cleanup
+├── oea-buildsystem/                    Consumable image landing (compose.sh + 4 compose files + README)
+│   ├── oea-buildsystem-base/           Base image (Dockerfile + entrypoint + mcli + oea-retry)
+│   ├── oea-buildsystem-repo/           Content image with build-enviroment tree (FROM scratch)
+│   └── minio/                          Companion object-store stack (used only by oea)
+├── dreamos-buildsystem-ubnt18/         Consumable image landing (compose.sh + compose files + README)
+│   ├── dreamos-buildsystem-base/       Base image (toolchain-only)
+│   └── dreamos-buildsystem-sources/    Data image (baked-in dl-mirror)
+├── simplebuild4/                       s4 packaging (Dockerfile + compose)
+└── .github/workflows/                  Release CI for each build system + weekly ghcr cleanup
 ```
 
 ## Contributing

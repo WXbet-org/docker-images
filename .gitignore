@@ -12,4 +12,4 @@ sources-seed/
 # Populated at build time by oea-buildsystem-repo/build-repo.sh -- the
 # checked-out oe-alliance/build-enviroment repository with initialised
 # submodules. Regenerated per branch build, never committed.
-oea-buildsystem-repo/repo/
+oea-buildsystem/oea-buildsystem-repo/repo/
