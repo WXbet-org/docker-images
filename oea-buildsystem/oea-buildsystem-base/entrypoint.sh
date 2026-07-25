@@ -64,10 +64,10 @@
 # Mounting the volume directly at the openatv release dir keeps
 # bitbake's PWD on physical paths and dodges the whole class of bug.
 #
-# The mirror-URL config (SSTATE_MIRRORS + PREMIRRORS) lands in
-# workspace/site.conf (the Makefile-generated one) rather than
-# conf/site.conf, because the Makefile-generated file overrides
-# conf/site.conf on any DL_DIR / SSTATE_DIR conflict.
+# We write workspace/site.conf ourselves (11 Makefile-default lines
+# plus mirror URLs), so bitbake gets one authoritative config. The
+# Makefile's own site.conf recipe would only run if the file doesn't
+# exist yet -- since we always write it, its recipe becomes a no-op.
 #
 # Exit code: 0 if every MACHINE succeeded, 1 if any failed. Fail
 # report at the end lists which MACHINEs and their ERROR: markers.
@@ -158,20 +158,22 @@ do
     echo ">>> symlink $link -> $target"
 done
 
-# --- 4. Recipe refresh --------------------------------------------------
-# `make update` fetches submodules AND regenerates workspace/site.conf
-# with DL_DIR + SSTATE_DIR baked in -- that's why our mirror config
-# (below) is appended AFTER, not before.
-echo ">>> make update -- fetching latest recipes"
+# --- 4. Fetch submodules -----------------------------------------------
+echo ">>> make update"
 make update
 
-# --- 5. Mirror URLs -- appended to workspace/site.conf ----------------
-# Makefile just wrote workspace/site.conf with the DL_DIR / SSTATE_DIR
-# lines. bitbake reads that file (in addition to conf/site.conf), and
-# the Makefile-written version wins on any DL_DIR / SSTATE_DIR conflict.
-# So we append the mirror config to THAT file (not conf/site.conf) to
-# make sure bitbake sees it.
+# --- 4b. Prime the build tree via `make init` --------------------------
+# `make init` (target: setupmbuild + BBLAYERS + CONFFILES) writes
+# workspace/site.conf and the per-MACHINE conf/{local.conf,bblayers.conf,
+# env.source} for the given MACHINE. Needed once so bitbake has DL_DIR,
+# SSTATE_DIR etc. before Section 5 appends the mirror URLs. Uses first
+# MACHINE from $MACHINES -- the site.conf itself is machine-agnostic.
+FIRST_MACHINE="${MACHINES%% *}"
+echo ">>> make MACHINE=$FIRST_MACHINE init"
+make MACHINE="$FIRST_MACHINE" init
 SITE_CONF="/home/builder/workspace/site.conf"
+
+# --- 5. Append mirror URLs to workspace/site.conf ---------------------
 if [ -n "${SSTATE_MIRROR_URL:-}" ] || [ -n "${SOURCES_MIRROR_URL:-}" ]; then
     {
         echo ""
