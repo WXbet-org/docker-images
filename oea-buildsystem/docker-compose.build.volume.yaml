@@ -1,0 +1,107 @@
+# oea-buildsystem -- one-shot bitbake build, one MACHINE per container.
+#
+# Container starts, runs `make update` -> writes conf/site.conf (with
+# MinIO sstate + downloads mirrors if provided) -> runs
+# `make MACHINE=$MACHINE DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`,
+# then exits with make's return code. Bitbake output lands in
+# `docker logs <container>` and Komodo/Portainer's log view shows the
+# full build live.
+#
+# When to use this instead of the mount variant:
+#   * Komodo stack deploys where you don't want to plan host paths
+#   * Farm nodes where the host is disposable / immutable
+#   * Ephemeral build slots -- rip down + up, get a clean tree
+#
+# When to prefer docker-compose.mount.yaml:
+#   * You want to `ls tmp-glibc/...` from the host to poke a build
+#   * You want your existing /path/to/build-enviroment on the host
+#     to be the source of truth (not a Docker volume)
+#
+# Usage:
+#   MACHINE=dm900 docker compose -f docker-compose.volume.yaml up            # foreground
+#   MACHINE=dm900 docker compose -f docker-compose.volume.yaml up -d         # detached
+#   docker compose -f docker-compose.volume.yaml logs -f                     # follow log stream
+#
+# Environment overrides (via .env, shell or Komodo stack env):
+#   MACHINE=dm900              # REQUIRED -- one MACHINE per stack
+#   BRANCH=6.0                 # image tag        (default: 6.0)
+#   DISTRO=openatv             # distro variant   (default: openatv)
+#   DISTRO_TYPE=release        # release/experimental (default: release)
+#   ACTION=image               # any Makefile target (default: image)
+#   SSTATE_MIRROR_URL=...      # e.g. http://minio:9000/sstate-openatv-6.0
+#   DL_MIRROR_URL=...          # e.g. http://minio:9000/downloads
+#
+# Volumes:
+#   * sstate-cache -- named per-MACHINE volume, warm across runs.
+#     Delete via `docker volume rm oea-buildsystem_oea_sstate_<MACHINE>`
+#     to force a full cold build.
+#   * deploy       -- shared named volume; each MACHINE writes to
+#     its own /deploy/<MACHINE>/ subdir, so multiple stacks can share
+#     it without racing.
+
+services:
+  oea-build:
+    image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
+    container_name: oea-build-${MACHINE:?MACHINE env var must be set (e.g. dm900, vuduo4k)}
+    hostname: oea-build-${MACHINE}
+
+    networks:
+      # Same shared docker network as minio -- lets the container
+      # reach http://minio:9000 by hostname if SSTATE_MIRROR_URL /
+      # DL_MIRROR_URL point at it. External: assumed pre-created by
+      # the minio stack (`docker network create oea-build`).
+      - oea-build
+
+    environment:
+      MACHINE: "${MACHINE}"
+      DISTRO: "${DISTRO:-openatv}"
+      DISTRO_TYPE: "${DISTRO_TYPE:-release}"
+      ACTION: "${ACTION:-image}"
+      SSTATE_MIRROR_URL: "${SSTATE_MIRROR_URL:-}"
+      DL_MIRROR_URL: "${DL_MIRROR_URL:-}"
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
+
+    volumes:
+      # Per-MACHINE sstate volume -- keeps hot cache across runs
+      # without letting concurrent MACHINE stacks race on the same
+      # tmp-glibc/work dir. Volume name templated via env-var expands
+      # at deploy time.
+      - "oea_sstate_${MACHINE}:/sstate-cache"
+      # Shared deploy volume -- entrypoint writes to /deploy/<MACHINE>/
+      # so parallel builds don't overwrite each other. Post-build the
+      # orchestrator (or MinIO sync) drains this to permanent storage.
+      - "oea_deploy:/deploy"
+
+    # Host prerequisites (see oea-buildsystem-base/README.md):
+    #   kernel.apparmor_restrict_unprivileged_userns=0
+    #   fs.inotify.max_user_watches=524288
+    # If you can't set them host-wide, per-container fallbacks:
+    security_opt:
+      - apparmor=unconfined
+    sysctls:
+      fs.inotify.max_user_watches: 524288
+
+    # qtwebkit / boost linker phases blow through the default 1024.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # One-shot batch job -- exit code carries the build result
+    # (0 = OK, non-zero = bitbake failure). No auto-restart.
+    restart: "no"
+
+networks:
+  oea-build:
+    external: true
+
+volumes:
+  # Per-MACHINE sstate volume. Docker interpolates ${MACHINE} at
+  # `compose up` time so each MACHINE stack gets its own named volume
+  # (oea_sstate_dm900, oea_sstate_vuduo4k, ...). Not `external:` -->
+  # created on first `compose up` if missing.
+  oea_sstate_${MACHINE:?MACHINE env var must be set (e.g. dm900, vuduo4k)}:
+  # Shared deploy volume. Every MACHINE stack writes to its own
+  # /deploy/<MACHINE>/ subdir, so it's safe to share.
+  oea_deploy:

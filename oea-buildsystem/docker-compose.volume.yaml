@@ -1,0 +1,110 @@
+# oea-buildsystem -- long-running dev container, NO auto-build.
+#
+# Entrypoint runs its setup (make update, site.conf, sstate/deploy
+# symlinks) and then idles on `sleep infinity` instead of firing
+# `make image`. The container stays up until you `compose down`,
+# ready for you to exec into and drive builds by hand:
+#
+#   docker compose -f docker-compose.volume.yaml exec oea-build bash
+#
+# Then inside:
+#   make MACHINE=dm900 image           # full image build
+#   MACHINE=dm900 bitbake enigma2      # single-recipe rebuild
+#   MACHINE=dm900 bitbake -c menuconfig virtual/kernel
+#
+# Use cases: iterative debug of a failing recipe, one-off single-
+# package rebuild, kernel menuconfig, poking at bitbake internals.
+# For batch/CI runs (start, build one MACHINE, exit with build result),
+# use docker-compose.build.volume.yaml instead. Same image, different
+# lifecycle.
+#
+# For bind-mount instead of named volumes (browse sstate/deploy from
+# the host), use docker-compose.mount.yaml.
+#
+# Usage:
+#   MACHINE=dm900 docker compose -f docker-compose.volume.yaml up -d
+#   docker compose -f docker-compose.volume.yaml exec oea-build bash
+#   ssh -p 2222 builder@localhost    # password: builder
+#   docker compose -f docker-compose.volume.yaml down     # when done
+#
+# Environment overrides (via .env, shell or Komodo stack env):
+#   MACHINE=dm900              # REQUIRED -- one MACHINE per stack
+#                              # (drives which /deploy/<MACHINE>/
+#                              # symlink the entrypoint creates)
+#   BRANCH=6.0                 # image tag        (default: 6.0)
+#   DISTRO=openatv             # distro variant   (default: openatv)
+#   DISTRO_TYPE=release        # release/experimental (default: release)
+#   SSTATE_MIRROR_URL=...      # e.g. http://minio:9000/sstate-openatv-6.0
+#   DL_MIRROR_URL=...          # e.g. http://minio:9000/downloads
+#   SSH_PORT=2323              # host port for sshd    (default: 2222)
+#
+# ACTION is not passed here -- since there's no auto-build, the
+# entrypoint's ACTION env-var is ignored (`make` runs only when you
+# invoke it yourself in the exec'd shell).
+
+services:
+  oea-build:
+    image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
+    container_name: oea-build-dev-${MACHINE:?MACHINE env var must be set (e.g. dm900, vuduo4k)}
+    hostname: oea-build-dev-${MACHINE}
+
+    networks:
+      - oea-build
+
+    ports:
+      # sshd runs unconditionally inside the container; the entrypoint
+      # regenerates host keys per container start, so clients get a
+      # one-time host-key warning after `compose down/up`. Login as
+      # `builder` with password `builder`.
+      - "${SSH_PORT:-2222}:22"
+
+    environment:
+      MACHINE: "${MACHINE}"
+      DISTRO: "${DISTRO:-openatv}"
+      DISTRO_TYPE: "${DISTRO_TYPE:-release}"
+      SSTATE_MIRROR_URL: "${SSTATE_MIRROR_URL:-}"
+      DL_MIRROR_URL: "${DL_MIRROR_URL:-}"
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
+
+    volumes:
+      # Same named volumes as docker-compose.build.volume.yaml so a
+      # dev session inherits the warm sstate that the batch stack
+      # built up (and vice versa). Do NOT run this stack while the
+      # batch stack is also up for the SAME MACHINE -- bitbake will
+      # race on tmp/work paths inside sstate-cache.
+      - "oea_sstate_${MACHINE}:/sstate-cache"
+      - "oea_deploy:/deploy"
+
+    # `command:` overrides `CMD` in the image, but the ENTRYPOINT
+    # still runs first (setup: make update, site.conf, symlinks).
+    # Entrypoint's final step exec's whatever `$@` it received --
+    # so the container ends up idling on `sleep infinity` as PID 1
+    # after all the setup is done, ready for `docker compose exec`.
+    command: ["sleep", "infinity"]
+
+    security_opt:
+      - apparmor=unconfined
+    sysctls:
+      fs.inotify.max_user_watches: 524288
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # Long-running dev container: user tears it down manually with
+    # `compose down`. Don't auto-restart -- if the setup crashed
+    # you want to see the error, not have it loop.
+    restart: "no"
+
+networks:
+  oea-build:
+    external: true
+
+volumes:
+  # Shared with docker-compose.build.volume.yaml. Overriding: to point
+  # this stack at a different sstate/deploy, add `external: true` and
+  # `name: <your-volume>` under each volume entry.
+  oea_sstate_${MACHINE:?MACHINE env var must be set (e.g. dm900, vuduo4k)}:
+  oea_deploy:
