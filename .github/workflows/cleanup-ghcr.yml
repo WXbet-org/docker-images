@@ -2,14 +2,16 @@
 # cleanup-ghcr
 #
 # Prunes old versions from the GHCR packages this repo publishes.
-# Three steps, in order:
+# Steps in order:
 #
-#   1a. Delete old dreamos v*-releases   (keep 3 newest per image).
-#   1b. Delete old simplebuild4 date-semver releases (keep 10 newest).
-#   2.  Delete orphaned untagged versions across all images (keep 5
-#       newest as safety buffer).
+#   1a. Delete old dreamos v*-releases          (keep 3 newest per image).
+#   1b. Delete old simplebuild4 date-semver     (keep 3 newest).
+#   1c. Delete old oea semver v-releases        (keep 3 newest per image).
+#   1d. Delete old oea date-stamped bakes       (keep 3 newest per image).
+#   2.  Delete orphaned untagged versions across all images
+#                                               (keep 5 newest safety buffer).
 #
-# Steps 1a/1b run before step 2 so any child manifests (attestations,
+# Steps 1a-1d run before step 2 so any child manifests (attestations,
 # platform children) orphaned by a deletion become plain untagged and
 # get swept up in the same run rather than waiting a week for the
 # next cron.
@@ -17,6 +19,11 @@
 # dreamos-buildsystem-sources is intentionally excluded from tagged
 # cleanup -- its date-based tags (2026-07-20 etc.) are a manual
 # release archive that stays forever.
+#
+# oea moving tags (`26.04`, `6.0`, ...) are not matched by any glob
+# in steps 1c/1d (they contain no `-` at all), so they're skipped
+# entirely -- their content is always safe because they point at
+# whichever version is currently in the top-N retention window.
 #
 # Runs weekly on Sunday night and can be triggered manually.
 #
@@ -42,9 +49,10 @@ permissions:
   packages: write
 
 env:
-  IMAGES_ALL:      'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources simplebuild4'
+  IMAGES_ALL:      'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources simplebuild4 oea-buildsystem-base oea-buildsystem-repo oea-buildsystem'
   IMAGES_DREAMOS:  'dreamos-buildsystem-base dreamos-buildsystem-ubnt18'
   IMAGES_S4:       'simplebuild4'
+  IMAGES_OEA:      'oea-buildsystem-base oea-buildsystem-repo oea-buildsystem'
 
 jobs:
   cleanup:
@@ -92,6 +100,56 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           image-names: ${{ env.IMAGES_S4 }}
           image-tags: '[0-9]*.[0-9]*.[0-9]*'
+          tag-selection: tagged
+          keep-n-most-recent: 3
+          cut-off: 1h
+          dry-run: false
+
+      # ------------------------------------------------------------------
+      # Step 1c: oea semver v-releases -- keep 3 newest per image.
+      #
+      # image-tags='*-v*': matches `<prefix>-v<X>.<Y>.<Z>` tags:
+      #   - oea-buildsystem-base:      <ubuntu>-vX.Y.Z   (e.g. 26.04-v0.1.0)
+      #   - oea-buildsystem-repo:      <branch>-vX.Y.Z   (e.g. 6.0-v0.1.0)
+      #   - oea-buildsystem:           <branch>-vX.Y.Z   (e.g. 6.0-v0.1.0)
+      # Moving tags (`26.04`, `6.0`) don't contain '-' at all -- they
+      # skip this glob entirely and stay untouched.
+      # ------------------------------------------------------------------
+      - name: Delete old oea v-releases (keep 3 newest per image)
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: wxbet-org
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: ${{ env.IMAGES_OEA }}
+          image-tags: '*-v*'
+          tag-selection: tagged
+          keep-n-most-recent: 3
+          cut-off: 1h
+          dry-run: false
+
+      # ------------------------------------------------------------------
+      # Step 1d: oea date-stamped cron bakes -- keep 10 newest per image.
+      #
+      # image-tags='*-[0-9]*': matches `<prefix>-YYYY(...)` tags where
+      # what follows '-' starts with a digit:
+      #   - oea-buildsystem-base:      <ubuntu>-YYYY.MM.DD  (monthly cron)
+      #   - oea-buildsystem-repo:      <branch>-YYYYMMDD    (weekly cron)
+      #   - oea-buildsystem:           <branch>-YYYYMMDD    (weekly cron)
+      # Semver tags (`26.04-v0.1.0`) start with 'v' after the '-' and
+      # do NOT match. Moving tags contain no '-' and do NOT match.
+      #
+      # keep-n-most-recent=3: matches dreamos + simplebuild4 retention.
+      # Semver releases in step 1c and moving tags (:<ubuntu>, :<branch>)
+      # are the primary rollback targets; date-stamped cron bakes are
+      # short-lived correlation snapshots.
+      # ------------------------------------------------------------------
+      - name: Delete old oea date-stamped bakes (keep 3 newest per image)
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: wxbet-org
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: ${{ env.IMAGES_OEA }}
+          image-tags: '*-[0-9]*'
           tag-selection: tagged
           keep-n-most-recent: 3
           cut-off: 1h
