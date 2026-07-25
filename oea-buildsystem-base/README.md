@@ -120,16 +120,29 @@ On container start:
    - If MinIO write creds are set: `mcli mirror` sstate + sources
      (success or fail — the intermediate blobs are useful either
      way). On success, also mirrors `/deploy/$M/` to MinIO.
-   - Writes `$M` to `/temp/.oea-last-machine` so a later restart
-     resumes with the next MACHINE.
-   - Checks for pending SIGTERM/SIGINT — if received, exits 0
-     cleanly (graceful stop between MACHINEs).
+   - If bitbake exited cleanly (RC=0 or hard fail): writes `$M` to
+     `/temp/.oea-last-machine` so the next cycle passes this MACHINE.
+   - If bitbake exited because of a SIGTERM we forwarded to it (see
+     stop semantics below): does NOT write the state file, then exits
+     0 cleanly. Next start resumes AT this MACHINE.
 8. When `$MACHINES` is exhausted, cycles back to index 0 forever.
 
-`docker compose stop` sends SIGTERM → entrypoint finishes the current
-MACHINE, then exits. `compose up` resumes from the next MACHINE. For
-an instant freeze (memory retained), use `docker compose pause`;
-`unpause` continues mid-build.
+**Stop / pause:**
+
+- `docker compose stop` → SIGTERM to PID 1 → entrypoint forwards it to
+  the running bitbake process group. Bitbake stops scheduling new
+  tasks, lets in-flight tasks finish (typically minutes), then exits.
+  The container exits 0 cleanly. `compose up` resumes at the same
+  MACHINE (bitbake picks up on task-stamp resume — completed tasks
+  are cached, only unfinished ones re-run).
+- `docker compose pause` → cgroup freezer suspends all processes
+  instantly, no CPU, memory retained. `unpause` continues mid-task.
+
+`stop_grace_period` in the compose files is 30 min — generous headroom
+for the slowest single OE task (kernel compile, big Qt bits). If a
+task truly can't finish in 30 min, Docker escalates to SIGKILL and we
+lose those tasks — same effect as a hard crash, next start redoes
+this MACHINE from the last completed task stamp.
 
 ## Environment variables
 

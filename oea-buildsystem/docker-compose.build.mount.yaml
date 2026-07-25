@@ -93,11 +93,13 @@ services:
         hard: 65536
 
     # Long-running loop: survive host reboots. `docker compose stop`
-    # sends SIGTERM -- entrypoint finishes current MACHINE and exits
-    # gracefully. State file resumes on next `compose up`.
+    # sends SIGTERM -- entrypoint forwards to bitbake, which finishes
+    # its in-flight tasks (minutes, not hours) and exits cleanly.
+    # State file is not advanced, so next `compose up` resumes AT the
+    # same MACHINE (bitbake picks up on task-stamp resume).
     restart: unless-stopped
     stop_signal: SIGTERM
-    stop_grace_period: 8h    # allow current MACHINE to finish
+    stop_grace_period: 30m    # bitbake shuts down after current tasks finish
 
 networks:
   oea-build:

@@ -180,12 +180,26 @@ elif [ -f "$STATE_FILE" ]; then
     done
 fi
 
-# SIGTERM / SIGINT: finish the currently-running MACHINE cleanly then
-# exit. Compose/Komodo's "stop container" is graceful this way -- no
-# half-built MACHINE, and the state file points at what was completed
-# last so the next start resumes correctly.
+# SIGTERM / SIGINT: forward to bitbake for graceful shutdown. Bitbake
+# stops scheduling new tasks, lets in-flight tasks finish (typically
+# minutes, not the hours a full MACHINE takes), then exits. The
+# current MACHINE's state file is NOT advanced, so the next `compose
+# up` resumes AT this MACHINE (not after it). Any sstate + sources
+# already produced during the partial run get mirrored to MinIO as
+# usual on the way out.
 STOP_REQUESTED=0
-trap 'echo ">>> Stop signal received -- will exit after current MACHINE"; STOP_REQUESTED=1' TERM INT
+MAKE_PID=""
+handle_stop() {
+    echo ""
+    echo ">>> Stop signal received -- forwarding SIGTERM to bitbake for graceful shutdown"
+    echo ">>> (bitbake finishes in-flight tasks; next start resumes this MACHINE)"
+    STOP_REQUESTED=1
+    if [ -n "$MAKE_PID" ]; then
+        # -TERM to the make process group -- catches make + bitbake children.
+        kill -TERM -"$MAKE_PID" 2>/dev/null || kill -TERM "$MAKE_PID" 2>/dev/null || true
+    fi
+}
+trap handle_stop TERM INT
 
 # --- 10. Infinite MACHINE loop (round-robin, resumable) ----------------
 CYCLE=0
@@ -212,13 +226,26 @@ while true; do
         rm -rf "/temp/$M/deploy"
         ln -s "/deploy/$M" "/temp/$M/deploy"
 
-        if make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION"; then
-            RC=0
+        # Run make in the background so the SIGTERM trap can forward
+        # to bitbake mid-build. Own process group via `setsid` so we
+        # can signal the whole tree with `kill -TERM -<pgid>`.
+        set +e
+        setsid make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION" &
+        MAKE_PID=$!
+        wait "$MAKE_PID"
+        RC=$?
+        MAKE_PID=""
+        set -e
+
+        if [ "$RC" = "0" ]; then
             echo "================================================================="
             echo "  OK    MACHINE=$M  (cycle $CYCLE)"
             echo "================================================================="
+        elif [ "$STOP_REQUESTED" = "1" ]; then
+            echo "================================================================="
+            echo "  STOP  MACHINE=$M  (cycle $CYCLE, bitbake shut down cleanly)"
+            echo "================================================================="
         else
-            RC=$?
             echo "================================================================="
             echo "  FAIL  MACHINE=$M  (cycle $CYCLE, rc=$RC)"
             echo "================================================================="
@@ -247,16 +274,17 @@ while true; do
             fi
         fi
 
-        # Persist progress -- write only AFTER the build (whether OK or
-        # FAIL). An interrupted mid-build MACHINE stays unrecorded so
-        # the next start re-does it from wherever it got to.
-        echo "$M" > "$STATE_FILE"
-
-        # Graceful stop check between MACHINEs.
+        # Graceful-stop path: do NOT advance the state file so the
+        # next `compose up` resumes AT this MACHINE (bitbake had a
+        # partial run; it can pick up on task-stamp resume).
         if [ "$STOP_REQUESTED" = "1" ]; then
-            echo ">>> Stopping after $M (graceful exit)"
+            echo ">>> Stopping (next start will resume MACHINE=$M)"
             exit 0
         fi
+
+        # Normal completion (OK or hard FAIL): mark this MACHINE done
+        # so the next cycle's start-index passes it.
+        echo "$M" > "$STATE_FILE"
     done
 
     # Cycle complete -- next cycle starts at index 0.

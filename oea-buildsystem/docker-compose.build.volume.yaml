@@ -7,8 +7,9 @@
 # so `docker compose stop` / `down` / SIGTERM cleanly finish the
 # current MACHINE and the next `up` resumes from the following one.
 #
-# Pause: `docker compose pause` (instant, memory stays) or
-#        `docker compose stop` (graceful, waits for current MACHINE).
+# Pause: `docker compose pause` (instant freeze, memory stays) or
+#        `docker compose stop` (SIGTERM to bitbake, in-flight tasks
+#        finish -- typically minutes; resume at same MACHINE on next up).
 # Debug: `docker compose exec oea-build bash` or
 #        `ssh -p ${SSH_PORT:-2222} builder@localhost` (password: builder).
 #
@@ -107,11 +108,13 @@ services:
         hard: 65536
 
     # Long-running loop: survive host reboots. `docker compose stop`
-    # sends SIGTERM -- entrypoint finishes current MACHINE and exits
-    # gracefully. State file resumes on next `compose up`.
+    # sends SIGTERM -- entrypoint forwards to bitbake, which finishes
+    # its in-flight tasks (minutes, not hours) and exits cleanly.
+    # State file is not advanced, so next `compose up` resumes AT the
+    # same MACHINE (bitbake picks up on task-stamp resume).
     restart: unless-stopped
     stop_signal: SIGTERM
-    stop_grace_period: 8h    # allow current MACHINE to finish
+    stop_grace_period: 30m    # bitbake shuts down after current tasks finish
 
 networks:
   oea-build:
