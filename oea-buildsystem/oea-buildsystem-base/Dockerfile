@@ -112,6 +112,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
         libserf-dev \
         libsqlite3-dev \
         libtool \
+        libtool-bin \
         libusb-1.0-0-dev \
         libxml2-utils \
         locales \
