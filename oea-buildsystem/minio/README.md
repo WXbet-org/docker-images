@@ -100,16 +100,36 @@ mc anonymous set download local/sources
 # to a public bucket / rsync target.
 
 # Service user for the entrypoint's post-MACHINE sync (write access
-# to sstate + sources + deploy buckets)
-mc admin user add local builder <BUILDER_SECRET_KEY>
+# to sstate + sources + deploy buckets).
+#
+# The second arg to `admin user add` is a secret key of YOUR choice
+# (min. 8 chars). Pick something long + random -- generate with e.g.
+# `openssl rand -base64 32` or `pwgen 32 1`. Save it somewhere
+# durable (password manager, Komodo stack secrets, ...) because MinIO
+# won't show it again after this command runs.
+BUILDER_SECRET=$(openssl rand -base64 32)
+echo "SAVE THIS: MINIO_SECRET_KEY for the oea build stacks = $BUILDER_SECRET"
+
+mc admin user add local builder "$BUILDER_SECRET"
 mc admin policy attach local readwrite --user builder
 ```
 
-Verify:
+Later, in each oea build stack's Komodo/compose env:
+```
+MINIO_ACCESS_KEY=builder
+MINIO_SECRET_KEY=<the value you saved above>
+```
+
+**Lost the key?** Rotate: `mc admin user remove local builder` then
+run the `admin user add` line again with a fresh secret, and update
+every stack's `MINIO_SECRET_KEY`.
+
+Verify the setup:
 
 ```sh
 mc anonymous get "local/sstate-${DISTRO}-${BRANCH}"   # -> "download"
 mc admin user list local                              # lists `builder`
+mc admin user info local builder                      # policy: readwrite
 ```
 
 ## Consuming from build containers
