@@ -39,12 +39,11 @@
 #   /sources              DL_DIR -- warmed from SOURCES_MIRROR_URL on miss
 #   /deploy               deploy artefacts per MACHINE (kernel, rootfs, feeds)
 #
-# The build-enviroment Makefile writes hard-coded paths that we
-# symlink onto these volumes:
-#   builds/$DISTRO/sstate-cache          -> /sstate-cache        (shared across all MACHINEs)
-#   builds/$DISTRO/downloads             -> /sources             (shared across all MACHINEs)
-#   builds/$DISTRO/$DISTRO_TYPE/$M/tmp   -> /temp/$M             (per-MACHINE, big)
-#   /temp/$M/deploy                      -> /deploy/$M           (per-MACHINE deploy on separate volume)
+# How the volumes are wired to bitbake:
+#   /sstate-cache      set as SSTATE_DIR in site.conf (hard override)
+#   /sources           set as DL_DIR     in site.conf (hard override)
+#   /temp/$M           per-MACHINE tmp/  symlinked at loop-iteration setup
+#   /deploy/$M         per-MACHINE deploy symlinked inside /temp/$M/deploy
 #
 # Exit code: 0 if every MACHINE succeeded, 1 if any failed. Fail
 # report at the end lists which MACHINEs and their ERROR: markers.
@@ -96,9 +95,19 @@ git config --global --get user.name >/dev/null 2>&1 \
 echo ">>> make update -- fetching latest recipes"
 make update
 
-# --- 4. site.conf: mirror URLs (read side) -----------------------------
+# --- 4. site.conf: fixed paths + mirror URLs ---------------------------
+# DL_DIR + SSTATE_DIR are set explicitly here so they DON'T land in
+# bitbake.conf's per-MACHINE default ${TOPDIR}/downloads and
+# ${TOPDIR}/sstate-cache (which would put fetches inside the tmp/
+# tree, wasting the container's writable layer and defeating the
+# shared /sources + /sstate-cache volumes entirely).
 mkdir -p conf
-: > conf/site.conf
+cat > conf/site.conf <<'EOF'
+# Managed by oea-buildsystem entrypoint -- do not edit by hand.
+# Pin the two shared cross-MACHINE caches onto our mounted volumes.
+DL_DIR     = "/sources"
+SSTATE_DIR = "/sstate-cache"
+EOF
 if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
     echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\"" >> conf/site.conf
 fi
@@ -123,10 +132,9 @@ if [ -s conf/site.conf ]; then
     sed 's/^/    /' conf/site.conf
 fi
 
-# --- 5. Shared symlinks (sstate + sources are cross-MACHINE) -----------
-mkdir -p "builds/$DISTRO"
-rm -rf "builds/$DISTRO/sstate-cache" && ln -s /sstate-cache "builds/$DISTRO/sstate-cache"
-rm -rf "builds/$DISTRO/downloads"    && ln -s /sources      "builds/$DISTRO/downloads"
+# --- 5. (no shared symlinks -- DL_DIR + SSTATE_DIR are hard-set to
+#         /sources + /sstate-cache in site.conf above, so bitbake
+#         writes directly to those volumes without any indirection.)
 
 # --- 6. sshd -----------------------------------------------------------
 if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
