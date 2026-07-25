@@ -73,12 +73,23 @@ Four ready-made compose files cover the two axes {auto-loop vs dev} ×
 
 **Auto-loop (`.build.` variants):** takes `MACHINES="dm900 dm920 …"`
 and cycles through them round-robin, forever. `docker compose stop`
-sends SIGTERM → entrypoint finishes the current MACHINE and exits
-cleanly. `compose up` resumes from the next MACHINE via state file on
-`/temp`. `docker compose pause` freezes mid-build (kernel-level, RAM
-kept), `unpause` continues. For the 4-containers × 50-MACHINEs farm
-pattern: deploy 4 stacks with different `-p` project names and
-disjoint `MACHINES` subsets — MinIO glues them together in real time.
+sends SIGTERM → entrypoint forwards to bitbake, in-flight tasks
+finish (typically minutes), container exits cleanly, next `compose
+up` resumes at the same MACHINE. `docker compose pause` freezes
+mid-build (kernel-level, RAM kept), `unpause` continues.
+
+Failed MACHINEs auto-retry once at end of each cycle (transient
+upstream / network glitches heal themselves). For a mid-cycle
+priority build (e.g. one MACHINE failed and you want it retried
+NOW, not at end of cycle):
+```sh
+docker compose exec oea-build oea-retry dm900
+```
+The current build isn't interrupted; `dm900` goes next.
+
+For the 4-containers × 50-MACHINEs farm pattern: deploy 4 stacks
+with different `-p` project names and disjoint `MACHINES` subsets —
+MinIO glues them together in real time.
 
 **Dev (no `.build.` prefix):** takes single `MACHINE=dm900`, sets up
 the container, then idles without auto-building. Attach via

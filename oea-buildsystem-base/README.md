@@ -127,6 +127,26 @@ On container start:
      0 cleanly. Next start resumes AT this MACHINE.
 8. When `$MACHINES` is exhausted, cycles back to index 0 forever.
 
+**Retrying failed MACHINEs mid-cycle:**
+
+- **Auto-retry at end of cycle** — any MACHINE that fails during
+  cycle N is queued and re-attempted once before cycle N+1 starts.
+  Catches transient upstream / network glitches without operator
+  intervention. If the retry also fails, the MACHINE is not queued
+  again this cycle (avoids retry storms on persistent errors — the
+  next full cycle will visit it in its normal round-robin slot).
+- **Priority queue via `oea-retry`** — inside the container:
+  ```
+  oea-retry dm900              # queue one
+  oea-retry dm900 dm920        # queue several, processed in order
+  oea-retry --list             # show queue
+  oea-retry --clear            # empty queue
+  ```
+  Attach with `docker compose exec oea-build oea-retry dm900` or
+  over SSH. The queue is drained before each natural round-robin
+  iteration — the currently-running build is NOT interrupted, but
+  your MACHINE(s) go next.
+
 **Stop / pause:**
 
 - `docker compose stop` → SIGTERM to PID 1 → entrypoint forwards it to

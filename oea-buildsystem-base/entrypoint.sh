@@ -201,82 +201,131 @@ handle_stop() {
 }
 trap handle_stop TERM INT
 
-# --- 10. Infinite MACHINE loop (round-robin, resumable) ----------------
+# --- 10. Queue files for priority + failed-in-cycle --------------------
+# Priority queue: user injects MACHINEs via `oea-retry <MACHINE>`
+#   (helper script at /usr/local/bin/oea-retry). Drained BEFORE each
+#   natural round-robin iteration.
+# Failed-in-cycle queue: MACHINEs that failed during the current cycle
+#   get one auto-retry pass at end-of-cycle, before starting the next.
+PRIORITY_QUEUE=/temp/.oea-priority
+FAILED_QUEUE=/temp/.oea-failed-current
+mkdir -p /temp
+: > "$FAILED_QUEUE"    # start fresh each container start
+
+# --- 11. build_machine() helper ---------------------------------------
+# args:  $1 = MACHINE   $2 = label (for logs)   $3 = "retry" flag
+# When $3 is "retry", failures are NOT re-queued into $FAILED_QUEUE
+# (prevents endless-retry storms on persistent errors -- next full
+# cycle will visit this MACHINE again anyway).
+build_machine() {
+    local M="$1"
+    local LABEL="$2"
+    local IS_RETRY="${3:-}"
+
+    echo
+    echo "================================================================="
+    echo "  START  MACHINE=$M  ($LABEL)"
+    echo "================================================================="
+    local BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
+    mkdir -p "$BUILD_DIR"
+    rm -rf "$BUILD_DIR/tmp"
+    mkdir -p "/temp/$M" "/deploy/$M"
+    ln -s "/temp/$M" "$BUILD_DIR/tmp"
+    rm -rf "/temp/$M/deploy"
+    ln -s "/deploy/$M" "/temp/$M/deploy"
+
+    # Run make in its own process group so the SIGTERM handler can
+    # signal the whole tree (make + bitbake workers).
+    set +e
+    setsid make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION" &
+    MAKE_PID=$!
+    wait "$MAKE_PID"
+    local RC=$?
+    MAKE_PID=""
+    set -e
+
+    if [ "$RC" = "0" ]; then
+        echo "================================================================="
+        echo "  OK    MACHINE=$M  ($LABEL)"
+        echo "================================================================="
+    elif [ "$STOP_REQUESTED" = "1" ]; then
+        echo "================================================================="
+        echo "  STOP  MACHINE=$M  ($LABEL, bitbake shut down cleanly)"
+        echo "================================================================="
+    else
+        echo "================================================================="
+        echo "  FAIL  MACHINE=$M  ($LABEL, rc=$RC)"
+        echo "================================================================="
+        local COOKER_LOG
+        COOKER_LOG=$(ls -1t "/temp/$M/log/cooker/$M"/*.log 2>/dev/null | head -1 || true)
+        if [ -n "$COOKER_LOG" ]; then
+            echo "  ERROR markers from $COOKER_LOG:"
+            grep -E "^ERROR:" "$COOKER_LOG" 2>/dev/null || echo "  (no ERROR markers in log)"
+        else
+            echo "  (no cooker log found under /temp/$M/log/cooker/$M/)"
+        fi
+        # Queue for end-of-cycle retry unless this WAS the retry.
+        if [ "$IS_RETRY" != "retry" ]; then
+            echo "$M" >> "$FAILED_QUEUE"
+            echo "  >>> queued for end-of-cycle retry"
+        fi
+    fi
+
+    # --- MinIO sync (per-MACHINE, right after the build) ---
+    if [ "$MC_ENABLED" = "1" ]; then
+        echo ">>> mcli mirror sstate + sources -> MinIO"
+        mcli mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
+            || echo "!!! sstate sync failed (continuing)"
+        mcli mirror --overwrite --newer /sources/      "local/sources/" \
+            || echo "!!! sources sync failed (continuing)"
+        if [ "$RC" = "0" ]; then
+            echo ">>> mcli mirror deploy/$M -> MinIO"
+            mcli mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
+                || echo "!!! deploy sync failed for $M"
+        else
+            echo ">>> skipping deploy sync for $M (build failed / stopped, artefacts may be partial)"
+        fi
+    fi
+
+    return $RC
+}
+
+# --- 12. drain_priority_queue() ---------------------------------------
+# Pops MACHINEs from the priority queue file one at a time (atomic:
+# read head, rewrite tail). Called before each natural iteration.
+drain_priority_queue() {
+    while [ -s "$PRIORITY_QUEUE" ]; do
+        local PM
+        PM=$(head -n 1 "$PRIORITY_QUEUE")
+        tail -n +2 "$PRIORITY_QUEUE" > "${PRIORITY_QUEUE}.tmp"
+        mv "${PRIORITY_QUEUE}.tmp" "$PRIORITY_QUEUE"
+        echo
+        echo "!!!!!! priority-queue: building MACHINE=$PM !!!!!!"
+        build_machine "$PM" "priority" || true
+        [ "$STOP_REQUESTED" = "1" ] && exit 0
+    done
+}
+
+# --- 13. Infinite MACHINE loop ----------------------------------------
 CYCLE=0
 while true; do
     CYCLE=$((CYCLE + 1))
+    : > "$FAILED_QUEUE"    # reset per-cycle failure tracking
     echo
     echo "================================================================="
     echo "  === CYCLE $CYCLE ==="
     echo "================================================================="
 
     for offset in $(seq 0 $((N - 1))); do
+        # Priority queue drained first -- user-injected MACHINEs (via
+        # `oea-retry`) get built before the next round-robin position.
+        drain_priority_queue
+
         IDX=$(( (START_IDX + offset) % N ))
         M="${MACHINES_ARR[$IDX]}"
 
-        echo
-        echo "================================================================="
-        echo "  START  MACHINE=$M  (cycle $CYCLE, position $((offset + 1))/$N)"
-        echo "================================================================="
-        BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
-        mkdir -p "$BUILD_DIR"
-        rm -rf "$BUILD_DIR/tmp"
-        mkdir -p "/temp/$M" "/deploy/$M"
-        ln -s "/temp/$M" "$BUILD_DIR/tmp"
-        rm -rf "/temp/$M/deploy"
-        ln -s "/deploy/$M" "/temp/$M/deploy"
+        build_machine "$M" "cycle $CYCLE, pos $((offset + 1))/$N" || true
 
-        # Run make in the background so the SIGTERM trap can forward
-        # to bitbake mid-build. Own process group via `setsid` so we
-        # can signal the whole tree with `kill -TERM -<pgid>`.
-        set +e
-        setsid make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION" &
-        MAKE_PID=$!
-        wait "$MAKE_PID"
-        RC=$?
-        MAKE_PID=""
-        set -e
-
-        if [ "$RC" = "0" ]; then
-            echo "================================================================="
-            echo "  OK    MACHINE=$M  (cycle $CYCLE)"
-            echo "================================================================="
-        elif [ "$STOP_REQUESTED" = "1" ]; then
-            echo "================================================================="
-            echo "  STOP  MACHINE=$M  (cycle $CYCLE, bitbake shut down cleanly)"
-            echo "================================================================="
-        else
-            echo "================================================================="
-            echo "  FAIL  MACHINE=$M  (cycle $CYCLE, rc=$RC)"
-            echo "================================================================="
-            COOKER_LOG=$(ls -1t "/temp/$M/log/cooker/$M"/*.log 2>/dev/null | head -1 || true)
-            if [ -n "$COOKER_LOG" ]; then
-                echo "  ERROR markers from $COOKER_LOG:"
-                grep -E "^ERROR:" "$COOKER_LOG" 2>/dev/null || echo "  (no ERROR markers in log)"
-            else
-                echo "  (no cooker log found under /temp/$M/log/cooker/$M/)"
-            fi
-        fi
-
-        # --- MinIO sync (per-MACHINE, right after the build) ---
-        if [ "$MC_ENABLED" = "1" ]; then
-            echo ">>> mcli mirror sstate + sources -> MinIO"
-            mcli mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
-                || echo "!!! sstate sync failed (continuing)"
-            mcli mirror --overwrite --newer /sources/      "local/sources/" \
-                || echo "!!! sources sync failed (continuing)"
-            if [ "$RC" = "0" ]; then
-                echo ">>> mcli mirror deploy/$M -> MinIO"
-                mcli mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
-                    || echo "!!! deploy sync failed for $M"
-            else
-                echo ">>> skipping deploy sync for $M (build failed, artefacts may be partial)"
-            fi
-        fi
-
-        # Graceful-stop path: do NOT advance the state file so the
-        # next `compose up` resumes AT this MACHINE (bitbake had a
-        # partial run; it can pick up on task-stamp resume).
         if [ "$STOP_REQUESTED" = "1" ]; then
             echo ">>> Stopping (next start will resume MACHINE=$M)"
             exit 0
@@ -286,6 +335,26 @@ while true; do
         # so the next cycle's start-index passes it.
         echo "$M" > "$STATE_FILE"
     done
+
+    # End-of-cycle: drain priority queue one last time (user may have
+    # injected while we were on the last MACHINE), then auto-retry any
+    # MACHINEs that failed this cycle.
+    drain_priority_queue
+
+    if [ -s "$FAILED_QUEUE" ]; then
+        RETRY_LIST=$(cat "$FAILED_QUEUE")
+        RETRY_COUNT=$(echo "$RETRY_LIST" | wc -w)
+        : > "$FAILED_QUEUE"
+        echo
+        echo "================================================================="
+        echo "  === END-OF-CYCLE RETRY PASS ($RETRY_COUNT MACHINE(s)) ==="
+        echo "================================================================="
+        for RM in $RETRY_LIST; do
+            drain_priority_queue
+            build_machine "$RM" "retry after cycle $CYCLE" "retry" || true
+            [ "$STOP_REQUESTED" = "1" ] && exit 0
+        done
+    fi
 
     # Cycle complete -- next cycle starts at index 0.
     START_IDX=0

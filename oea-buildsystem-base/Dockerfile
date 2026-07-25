@@ -213,6 +213,7 @@ RUN sed -ri \
 RUN install -d -o "$BUILD_USER" -g "$BUILD_USER" /work
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chmod=0755 oea-retry.sh  /usr/local/bin/oea-retry
 
 USER $BUILD_USER
 WORKDIR /work
