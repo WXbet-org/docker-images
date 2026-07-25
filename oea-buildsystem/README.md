@@ -159,7 +159,7 @@ Currently-running build is not interrupted; queued MACHINE(s) go next.
 
 Edit the stack's `MACHINES=…` env-var and `compose up -d` again —
 Docker recreates the container with the new list, entrypoint's state
-file (`/home/builder/temp/.oea-last-machine`) is preserved so the resume logic
+file (`workspace/builds/$DISTRO/$DISTRO_TYPE/.oea-last-machine`) is preserved so the resume logic
 picks the next matching MACHINE.
 
 ### Stop / pause
@@ -277,9 +277,10 @@ Full bucket setup + service account creation in
 Inside the container:
 
 ```sh
-cat /home/builder/temp/.oea-last-machine        # last MACHINE that completed (OK or FAIL)
-cat /home/builder/temp/.oea-failed-current      # MACHINEs failed this cycle, pending retry
-cat /home/builder/temp/.oea-priority            # MACHINEs queued via `oea-retry`
+BR=/home/builder/workspace/builds/openatv/release   # for the default DISTRO/DISTRO_TYPE
+cat $BR/.oea-last-machine        # last MACHINE that completed (OK or FAIL)
+cat $BR/.oea-failed-current      # MACHINEs failed this cycle, pending retry
+cat $BR/.oea-priority            # MACHINEs queued via `oea-retry`
 ```
 
 ### Bitbake cooker logs
@@ -287,9 +288,12 @@ cat /home/builder/temp/.oea-priority            # MACHINEs queued via `oea-retry
 Per-MACHINE, timestamped, on the `<project>_temp` volume:
 
 ```sh
-ls -1t /temp/<MACHINE>/log/cooker/<MACHINE>/*.log | head
-grep -E '^ERROR:' /temp/<MACHINE>/log/cooker/<MACHINE>/<latest>.log
+ls -1t $BR/<MACHINEDIR>/tmp/log/cooker/<MACHINEDIR>/*.log | head
+grep -E '^ERROR:' $BR/<MACHINEDIR>/tmp/log/cooker/<MACHINEDIR>/<latest>.log
 ```
+
+(`<MACHINEDIR>` = the resolved MACHINE dir, e.g. `gb7252` for
+MACHINEBUILDs `gbquad4kpro` / `gbquad4k` / `gbue4kpro`.)
 
 ### Inspect / poke a failed recipe
 
@@ -298,7 +302,7 @@ comfortable navigation:
 
 ```sh
 ssh -p 2222 builder@<host>
-cd /home/builder/temp/<MACHINE>/work/<PACKAGEARCH>/<recipe>/<version>-<PR>/
+cd $BR/<MACHINEDIR>/tmp/work/<PACKAGEARCH>/<recipe>/<version>-<PR>/
 mc
 ```
 

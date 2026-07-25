@@ -96,7 +96,12 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      - "temp:/home/builder/temp"
+      # `temp` holds every MACHINE's BUILDDIR (conf/env/tmp). Mounted
+      # directly at the openatv release dir -- not via a symlink -- so
+      # bitbake's PWD stays on physical paths. A tmp/ symlink here
+      # breaks libtool-native's do_compile (inline-source's funclib.sh
+      # cd's a 7-up relative path that only resolves off a real cwd).
+      - "temp:/home/builder/workspace/builds/${DISTRO:-openatv}/${DISTRO_TYPE:-release}"
       - "sstate:/home/builder/sstate-cache"
       - "sources:/home/builder/sources"
       - "deploy:/home/builder/deploy"

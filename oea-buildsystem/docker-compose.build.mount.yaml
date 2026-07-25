@@ -83,7 +83,10 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      - "${TEMP_DIR:-/var/lib/oea-build/temp}:/home/builder/temp"
+      # See docker-compose.build.volume.yaml for why `temp` mounts at
+      # the openatv release dir instead of /home/builder/temp -- a
+      # tmp/ symlink there breaks libtool-native's do_compile.
+      - "${TEMP_DIR:-/var/lib/oea-build/temp}:/home/builder/workspace/builds/${DISTRO:-openatv}/${DISTRO_TYPE:-release}"
       - "${SSTATE_DIR:-/var/lib/oea-build/sstate}:/home/builder/sstate-cache"
       - "${SOURCES_DIR:-/var/lib/oea-build/sources}:/home/builder/sources"
       - "${DEPLOY_DIR:-/var/lib/oea-build/deploy}:/home/builder/deploy"

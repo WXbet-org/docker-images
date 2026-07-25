@@ -16,7 +16,10 @@
 # oea-buildsystem container.
 set -euo pipefail
 
-QUEUE=/temp/.oea-priority
+# Queue file lives in the BUILDS_ROOT (per-project temp volume).
+# Uses same DISTRO / DISTRO_TYPE defaults as entrypoint.sh; override
+# via env when calling from a shell that doesn't have them set.
+QUEUE="/home/builder/workspace/builds/${DISTRO:-openatv}/${DISTRO_TYPE:-release}/.oea-priority"
 
 case "${1:-}" in
     ""|-h|--help)

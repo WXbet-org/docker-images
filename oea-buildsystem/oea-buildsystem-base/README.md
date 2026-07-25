@@ -114,19 +114,22 @@ On container start:
    `exec`s it here and skips the build loop. Otherwise:
 6. Determines the resume point:
    - `SKIP_TO_MACHINE=<name>` → force that as start
-   - else state file `/home/builder/temp/.oea-last-machine` → resume with next
+   - else state file `builds/$DISTRO/$DISTRO_TYPE/.oea-last-machine` → resume with next
    - else start at first MACHINE in `$MACHINES`
 7. Enters an **infinite** round-robin loop through `$MACHINES`. For
    each MACHINE `$M`:
-   - Symlinks per-MACHINE paths: `builds/$DISTRO/$DISTRO_TYPE/$M/tmp`
-     → `/home/builder/temp/$M`, then `/home/builder/temp/$M/deploy` → `/home/builder/deploy/$M`.
+   - `mkdir -p builds/$DISTRO/$DISTRO_TYPE/$M/tmp` (real dir, the whole
+     openatv release tree is volume-mounted -- NOT a symlink; see the
+     libtool inline-source note at the top of `entrypoint.sh`).
+   - Symlinks `builds/$DISTRO/$DISTRO_TYPE/$M/tmp/deploy` → `/home/builder/deploy/$M`
+     to route per-MACHINE artefacts onto the shared deploy volume.
    - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
    - If MinIO write creds are set: `mcli mirror` sstate + sources
      (success or fail — the intermediate blobs are useful either
      way). Deploy is NOT mirrored — artefacts stay on the shared
      `oea-buildsystem_deploy` volume for a downstream publishing job.
    - If bitbake exited cleanly (RC=0 or hard fail): writes `$M` to
-     `/home/builder/temp/.oea-last-machine` so the next cycle passes this MACHINE.
+     `builds/$DISTRO/$DISTRO_TYPE/.oea-last-machine` so the next cycle passes this MACHINE.
    - If bitbake exited because of a SIGTERM we forwarded to it (see
      stop semantics below): does NOT write the state file, then exits
      0 cleanly. Next start resumes AT this MACHINE.

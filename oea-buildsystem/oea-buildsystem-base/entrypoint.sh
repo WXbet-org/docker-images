@@ -12,7 +12,8 @@
 # Dev / debug: attach any time via `docker compose exec oea-build bash`
 # or `ssh -p 2222 builder@localhost` (password `builder`). To force a
 # specific starting point, set SKIP_TO_MACHINE=<name> before starting
-# the container, or edit /temp/.oea-last-machine and restart.
+# the container, or edit
+# workspace/builds/$DISTRO/$DISTRO_TYPE/.oea-last-machine and restart.
 #
 # Parameters (env-vars):
 #   MACHINES              REQUIRED. Space-separated list, one make invocation each.
@@ -33,8 +34,8 @@
 #     MINIO_ACCESS_KEY    service-account access key
 #     MINIO_SECRET_KEY    service-account secret key
 #
-# Volumes (expected, all writable, mounted directly under $HOME):
-#   /home/builder/temp          TMPDIR per MACHINE (work, sysroots, stamps) -- huge
+# Volumes (expected, all writable):
+#   /home/builder/workspace/builds/$DISTRO/$DISTRO_TYPE   every MACHINE's BUILDDIR (huge)
 #   /home/builder/sstate-cache  local sstate cache -- warmed from SSTATE_MIRROR_URL on miss
 #   /home/builder/sources       DL_DIR -- warmed from SOURCES_MIRROR_URL on miss
 #   /home/builder/deploy        deploy artefacts per MACHINE (kernel, rootfs, feeds)
@@ -43,10 +44,30 @@
 # cd's there before running make.
 #
 # How the volumes are wired to bitbake:
-#   /home/builder/sstate-cache      as SSTATE_DIR in site.conf (hard override)
-#   /home/builder/sources           as DL_DIR     in site.conf (hard override)
-#   /home/builder/temp/$M           per-MACHINE tmp/, symlinked in loop iteration
-#   /home/builder/deploy/$M         per-MACHINE deploy, symlinked inside temp/$M/deploy
+#   /home/builder/sources                              workspace/sources          -> volume (symlink, setup)
+#   /home/builder/sstate-cache                         workspace/builds/$DISTRO/sstate-cache -> volume (symlink, setup)
+#   workspace/builds/$DISTRO/$DISTRO_TYPE/             direct volume mount -- no symlink
+#   /home/builder/deploy/$M                            workspace/builds/.../$M/tmp/deploy -> volume (symlink, per iteration)
+#
+# The `sources` + `sstate-cache` symlinks work because bitbake only
+# reads/writes files inside them by absolute path -- no cd chains
+# whose relative-path arithmetic breaks on the symlink boundary.
+#
+# The BUILDDIR tree is deliberately NOT a symlink: libtool-native's
+# do_compile runs inline-source, which sources funclib.sh, which does
+# a 7-up-relative `cd` from the build/ dir. That cd resolves via the
+# shell's cwd string; if the cwd is a through-symlink path, the
+# resolved target lands outside the real tree and cd fails silently.
+# The result is a truncated ltmain.sh (funclib.sh + options-parser
+# never get inlined) -> the generated libtool script is missing
+# func_add_hook -> do_install fails with "command not found".
+# Mounting the volume directly at the openatv release dir keeps
+# bitbake's PWD on physical paths and dodges the whole class of bug.
+#
+# The mirror-URL config (SSTATE_MIRRORS + PREMIRRORS) lands in
+# workspace/site.conf (the Makefile-generated one) rather than
+# conf/site.conf, because the Makefile-generated file overrides
+# conf/site.conf on any DL_DIR / SSTATE_DIR conflict.
 #
 # Exit code: 0 if every MACHINE succeeded, 1 if any failed. Fail
 # report at the end lists which MACHINEs and their ERROR: markers.
@@ -81,7 +102,8 @@ cd /home/builder/workspace
 # from an already-1000-owned host path skip this cleanly (the [ ! -w ]
 # check is false). Only the top-level dir is chowned -- avoids a slow
 # recursive chown over a 200 GB temp/.
-for d in /home/builder/temp /home/builder/sstate-cache /home/builder/sources /home/builder/deploy; do
+BUILDS_ROOT="/home/builder/workspace/builds/$DISTRO/$DISTRO_TYPE"
+for d in "$BUILDS_ROOT" /home/builder/sstate-cache /home/builder/sources /home/builder/deploy; do
     if [ -d "$d" ] && [ ! -w "$d" ]; then
         echo ">>> chown $d (mount root not writable by builder)"
         sudo chown builder:builder "$d"
@@ -94,28 +116,59 @@ git config --global --get user.email >/dev/null 2>&1 \
 git config --global --get user.name >/dev/null 2>&1 \
     || git config --global user.name  "oea-buildsystem builder"
 
-# --- 3. Recipe refresh --------------------------------------------------
+# --- 3. Shared-cache symlinks (before make update, so the tree is
+#         wired up before any bitbake run).
+# build-enviroment's Makefile hard-codes:
+#   DL_DIR     = $(CURDIR)/sources                        -> workspace/sources
+#   SSTATE_DIR = $(CURDIR)/builds/$(DISTRO)/sstate-cache  -> workspace/builds/$DISTRO/sstate-cache
+# and writes those into workspace/site.conf, which bitbake reads and
+# which takes precedence over anything in conf/site.conf. Instead of
+# fighting the config precedence, we redirect the paths via symlinks
+# so bitbake still writes to $(CURDIR)/... on paper but the bytes
+# land in our /home/builder/{sources,sstate-cache} volumes.
+mkdir -p "builds/$DISTRO"
+for pair in \
+    "sources:/home/builder/sources" \
+    "builds/$DISTRO/sstate-cache:/home/builder/sstate-cache"
+do
+    link="${pair%%:*}"
+    target="${pair##*:}"
+    if [ -L "$link" ]; then
+        continue
+    fi
+    if [ -d "$link" ]; then
+        # Empty leftover dir from a previous run / repo image: drop it.
+        # A non-empty dir means someone built without the symlink -- fail
+        # loudly rather than silently orphan its contents.
+        rmdir "$link" || { echo "!!! $link is non-empty; refusing to overwrite" >&2; exit 1; }
+    fi
+    ln -s "$target" "$link"
+    echo ">>> symlink $link -> $target"
+done
+
+# --- 4. Recipe refresh --------------------------------------------------
+# `make update` fetches submodules AND regenerates workspace/site.conf
+# with DL_DIR + SSTATE_DIR baked in -- that's why our mirror config
+# (below) is appended AFTER, not before.
 echo ">>> make update -- fetching latest recipes"
 make update
 
-# --- 4. site.conf: fixed paths + mirror URLs ---------------------------
-# DL_DIR + SSTATE_DIR are set explicitly here so they DON'T land in
-# bitbake.conf's per-MACHINE default ${TOPDIR}/downloads and
-# ${TOPDIR}/sstate-cache (which would put fetches inside the tmp/
-# tree, wasting the container's writable layer and defeating the
-# shared /sources + /sstate-cache volumes entirely).
-mkdir -p conf
-cat > conf/site.conf <<'EOF'
-# Managed by oea-buildsystem entrypoint -- do not edit by hand.
-# Pin the two shared cross-MACHINE caches onto our mounted volumes.
-DL_DIR     = "/home/builder/sources"
-SSTATE_DIR = "/home/builder/sstate-cache"
-EOF
-if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
-    echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\"" >> conf/site.conf
-fi
-if [ -n "${SOURCES_MIRROR_URL:-}" ]; then
-    cat >> conf/site.conf <<EOF
+# --- 5. Mirror URLs -- appended to workspace/site.conf ----------------
+# Makefile just wrote workspace/site.conf with the DL_DIR / SSTATE_DIR
+# lines. bitbake reads that file (in addition to conf/site.conf), and
+# the Makefile-written version wins on any DL_DIR / SSTATE_DIR conflict.
+# So we append the mirror config to THAT file (not conf/site.conf) to
+# make sure bitbake sees it.
+SITE_CONF="/home/builder/workspace/site.conf"
+if [ -n "${SSTATE_MIRROR_URL:-}" ] || [ -n "${SOURCES_MIRROR_URL:-}" ]; then
+    {
+        echo ""
+        echo "# --- oea-buildsystem: mirror URLs (appended by entrypoint) ---"
+        if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
+            echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\""
+        fi
+        if [ -n "${SOURCES_MIRROR_URL:-}" ]; then
+            cat <<EOF
 PREMIRRORS ?= "\\
     bzr://.*/.*      ${SOURCES_MIRROR_URL}/ \\n \\
     cvs://.*/.*      ${SOURCES_MIRROR_URL}/ \\n \\
@@ -129,15 +182,10 @@ PREMIRRORS ?= "\\
     http://.*/.*     ${SOURCES_MIRROR_URL}/ \\n \\
     https://.*/.*    ${SOURCES_MIRROR_URL}/ \\n"
 EOF
+        fi
+    } >> "$SITE_CONF"
+    echo ">>> mirror config appended to $SITE_CONF"
 fi
-if [ -s conf/site.conf ]; then
-    echo ">>> conf/site.conf written:"
-    sed 's/^/    /' conf/site.conf
-fi
-
-# --- 5. (no shared symlinks -- DL_DIR + SSTATE_DIR are hard-set in
-#         site.conf above, so bitbake writes directly to those
-#         volumes without indirection.)
 
 # --- 6. sshd -----------------------------------------------------------
 if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
@@ -178,7 +226,7 @@ fi
 # State file survives container restarts (lives on /temp volume).
 # Records the LAST completed MACHINE so we can resume from the next
 # one on restart, giving pause/stop-and-continue semantics.
-STATE_FILE="/home/builder/temp/.oea-last-machine"
+STATE_FILE="$BUILDS_ROOT/.oea-last-machine"
 MACHINES_ARR=($MACHINES)
 N=${#MACHINES_ARR[@]}
 
@@ -219,10 +267,20 @@ handle_stop() {
     echo ">>> Stop signal received -- forwarding SIGTERM to bitbake for graceful shutdown"
     echo ">>> (bitbake finishes in-flight tasks; next start resumes this MACHINE)"
     STOP_REQUESTED=1
-    if [ -n "$MAKE_PID" ]; then
-        # -TERM to the make process group -- catches make + bitbake children.
-        kill -TERM -"$MAKE_PID" 2>/dev/null || kill -TERM "$MAKE_PID" 2>/dev/null || true
-    fi
+    # SIGTERM ONLY to the bitbake cooker itself. It handles this
+    # gracefully -- stops scheduling new tasks and waits for in-flight
+    # compile / package tasks to finish, then exits with rc 1. A second
+    # SIGTERM would force an immediate abort (bitbake's double-tap).
+    #
+    # DO NOT broadcast to the process group (kill -TERM -PGID): that
+    # sends SIGTERM to every gcc / ld / python worker under bitbake as
+    # well, which nukes in-flight tasks instead of letting them finish.
+    pkill -TERM -x bitbake        2>/dev/null || true
+    pkill -TERM -x bitbake-server 2>/dev/null || true
+    # Fallback: if bitbake isn't up yet (still in setup / fetch), just
+    # forward to make so the outer wrapper unblocks.
+    [ -n "$MAKE_PID" ] && ! pgrep -x bitbake >/dev/null 2>&1 && \
+        kill -TERM "$MAKE_PID" 2>/dev/null || true
 }
 trap handle_stop TERM INT
 
@@ -232,37 +290,74 @@ trap handle_stop TERM INT
 #   natural round-robin iteration.
 # Failed-in-cycle queue: MACHINEs that failed during the current cycle
 #   get one auto-retry pass at end-of-cycle, before starting the next.
-PRIORITY_QUEUE=/home/builder/temp/.oea-priority
-FAILED_QUEUE=/home/builder/temp/.oea-failed-current
-mkdir -p /home/builder/temp
+PRIORITY_QUEUE="$BUILDS_ROOT/.oea-priority"
+FAILED_QUEUE="$BUILDS_ROOT/.oea-failed-current"
+mkdir -p "$BUILDS_ROOT"
 : > "$FAILED_QUEUE"    # start fresh each container start
 
-# --- 11. build_machine() helper ---------------------------------------
-# args:  $1 = MACHINE   $2 = label (for logs)   $3 = "retry" flag
+# --- 11. MACHINEBUILD -> MACHINE resolver -----------------------------
+# The build-enviroment Makefile treats user-supplied MACHINE as a
+# MACHINEBUILD alias and resolves it to the actual MACHINE (= builds/
+# subdirectory name) by grepping the `# MACHINEBUILDS:` annotation
+# in meta-brands/*/conf/machine/*.conf. Multiple MACHINEBUILDs can
+# map to the same MACHINE (same board family, different image variant).
+# Example:  gbquad4kpro -> gb7252,  gbquad4k -> gb7252,  pulse4kmini -> pulse4k
+#
+# We need the resolved name to place the tmp/ + deploy/ symlinks in the
+# right builds/... subdir and to find the cooker log for FAIL reports.
+# The MACHINEBUILD stays in $MACHINES / state-file / logs (that's what
+# the user typed).
+METADIR=/home/builder/workspace/meta-oe-alliance/meta-brands
+resolve_machine_dir() {
+    local mb="$1"
+    local conf
+    conf=$(grep -rl "^# MACHINEBUILDS:.*\b${mb}\b" "$METADIR"/*/conf/machine/*.conf 2>/dev/null | head -1)
+    if [ -n "$conf" ]; then
+        basename "$conf" .conf
+    else
+        # No alias annotation -- MACHINE == MACHINEBUILD (identity).
+        echo "$mb"
+    fi
+}
+
+# --- 12. build_machine() helper ---------------------------------------
+# args:  $1 = MACHINEBUILD (user-typed name)   $2 = label   $3 = "retry" flag
 # When $3 is "retry", failures are NOT re-queued into $FAILED_QUEUE
 # (prevents endless-retry storms on persistent errors -- next full
-# cycle will visit this MACHINE again anyway).
+# cycle will visit this MACHINEBUILD again anyway).
 build_machine() {
-    local M="$1"
+    local MB="$1"
     local LABEL="$2"
     local IS_RETRY="${3:-}"
+    local M
+    M=$(resolve_machine_dir "$MB")
 
     echo
     echo "================================================================="
-    echo "  START  MACHINE=$M  ($LABEL)"
+    if [ "$M" = "$MB" ]; then
+        echo "  START  MACHINE=$MB  ($LABEL)"
+    else
+        echo "  START  MACHINE=$MB  [-> builds/.../$M]  ($LABEL)"
+    fi
     echo "================================================================="
     local BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
-    mkdir -p "$BUILD_DIR"
-    rm -rf "$BUILD_DIR/tmp"
-    mkdir -p "/home/builder/temp/$M" "/home/builder/deploy/$M"
-    ln -s "/home/builder/temp/$M" "$BUILD_DIR/tmp"
-    rm -rf "/home/builder/temp/$M/deploy"
-    ln -s "/home/builder/deploy/$M" "/home/builder/temp/$M/deploy"
+    # tmp/ is a real directory inside the volume-mounted BUILDS_ROOT --
+    # NOT a symlink (see header notes on the libtool inline-source bug).
+    mkdir -p "$BUILD_DIR/tmp" "/home/builder/deploy/$M"
+    # deploy is a per-MACHINE symlink onto the shared cross-stack deploy
+    # volume. This one's safe: bitbake only stats/writes files inside
+    # deploy, no relative-path cd chains cross it.
+    if [ ! -L "$BUILD_DIR/tmp/deploy" ]; then
+        rm -rf "$BUILD_DIR/tmp/deploy"
+        ln -s "/home/builder/deploy/$M" "$BUILD_DIR/tmp/deploy"
+    fi
 
-    # Run make in its own process group so the SIGTERM handler can
-    # signal the whole tree (make + bitbake workers).
+    # Pass the MACHINEBUILD as MACHINE= to make -- the Makefile does its
+    # own resolution and expects the user-typed name. Run in a new
+    # session (setsid) so the process tree is isolated; the SIGTERM
+    # handler still signals bitbake by name, not by PGID.
     set +e
-    setsid make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION" &
+    setsid make MACHINE="$MB" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION" &
     MAKE_PID=$!
     wait "$MAKE_PID"
     local RC=$?
@@ -271,27 +366,27 @@ build_machine() {
 
     if [ "$RC" = "0" ]; then
         echo "================================================================="
-        echo "  OK    MACHINE=$M  ($LABEL)"
+        echo "  OK    MACHINE=$MB  ($LABEL)"
         echo "================================================================="
     elif [ "$STOP_REQUESTED" = "1" ]; then
         echo "================================================================="
-        echo "  STOP  MACHINE=$M  ($LABEL, bitbake shut down cleanly)"
+        echo "  STOP  MACHINE=$MB  ($LABEL, bitbake shut down cleanly)"
         echo "================================================================="
     else
         echo "================================================================="
-        echo "  FAIL  MACHINE=$M  ($LABEL, rc=$RC)"
+        echo "  FAIL  MACHINE=$MB  ($LABEL, rc=$RC)"
         echo "================================================================="
         local COOKER_LOG
-        COOKER_LOG=$(ls -1t "/temp/$M/log/cooker/$M"/*.log 2>/dev/null | head -1 || true)
+        COOKER_LOG=$(ls -1t "$BUILD_DIR/tmp/log/cooker/$M"/*.log 2>/dev/null | head -1 || true)
         if [ -n "$COOKER_LOG" ]; then
             echo "  ERROR markers from $COOKER_LOG:"
             grep -E "^ERROR:" "$COOKER_LOG" 2>/dev/null || echo "  (no ERROR markers in log)"
         else
-            echo "  (no cooker log found under /temp/$M/log/cooker/$M/)"
+            echo "  (no cooker log found under $BUILD_DIR/tmp/log/cooker/$M/)"
         fi
         # Queue for end-of-cycle retry unless this WAS the retry.
         if [ "$IS_RETRY" != "retry" ]; then
-            echo "$M" >> "$FAILED_QUEUE"
+            echo "$MB" >> "$FAILED_QUEUE"
             echo "  >>> queued for end-of-cycle retry"
         fi
     fi
@@ -303,18 +398,19 @@ build_machine() {
     # separate downstream job (feed hosting, rsync, ...).
     if [ "$MC_ENABLED" = "1" ]; then
         echo ">>> mcli mirror sstate + sources -> MinIO"
-        mcli mirror --overwrite /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
+        mcli mirror --overwrite /home/builder/sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
             || echo "!!! sstate sync failed (continuing)"
-        mcli mirror --overwrite /sources/      "local/sources/" \
+        mcli mirror --overwrite /home/builder/sources/      "local/sources/" \
             || echo "!!! sources sync failed (continuing)"
     fi
 
     return $RC
 }
 
-# --- 12. drain_priority_queue() ---------------------------------------
-# Pops MACHINEs from the priority queue file one at a time (atomic:
-# read head, rewrite tail). Called before each natural iteration.
+# --- 13. drain_priority_queue() ---------------------------------------
+# Pops MACHINEBUILDs from the priority queue file one at a time
+# (atomic: read head, rewrite tail). Called before each natural
+# iteration.
 drain_priority_queue() {
     while [ -s "$PRIORITY_QUEUE" ]; do
         local PM
@@ -328,7 +424,7 @@ drain_priority_queue() {
     done
 }
 
-# --- 13. Infinite MACHINE loop ----------------------------------------
+# --- 14. Infinite MACHINE loop ----------------------------------------
 CYCLE=0
 while true; do
     CYCLE=$((CYCLE + 1))
