@@ -41,8 +41,14 @@ services:
     volumes:
       # Host path appears as the builder user's home inside the container.
       # All BuildEnv checkouts + shared sources pool live here and persist
-      # across container restarts. Host UID/GID should be 1000:1000 for
-      # ownership to match (matches the image's `builder` user).
+      # across container restarts.
+      #
+      # ⚠️ Host-side ownership matters: the container process runs as
+      # `builder` (uid 1000). If the mounted host directory is owned by a
+      # different uid (e.g. /root/... on uid 0), the container will fail
+      # with `Permission denied` as soon as it tries to write. Either
+      # mount from a uid-1000 owned dir, or align ownership first:
+      #     sudo chown -R 1000:1000 <host-path>
       - "${BUILDS_DIR:-${HOME}/dreamos-builds}:/home/builder"
 
     environment:

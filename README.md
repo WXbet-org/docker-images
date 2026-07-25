@@ -93,6 +93,16 @@ Roughly 19 GB compressed download / ~20 GB on disk — the bulk is a baked-in OE
 
 Two patterns depending on how long-lived your session is.
 
+> ⚠️ **Host-side ownership matters for bind mounts.** The image runs as user `builder` (uid 1000). A bind-mounted directory whose host owner is *not* uid 1000 will hit `Permission denied` the moment the entrypoint (or bitbake) tries to write there — for example when logging in as `root` and using `/root/dreamos-builds` (uid 0). Two fixes:
+>
+> - Mount from a host directory whose owner is uid 1000 (typical for the primary Linux desktop user — `id -u` returns 1000).
+> - Or, before the first container start, align ownership:
+>   ```sh
+>   sudo chown -R 1000:1000 <your-host-path>
+>   ```
+>
+> The name of the host user is irrelevant — only the numeric UID/GID matters, because that's what Linux passes across the mount boundary. If you'd rather not care, use the **volume** variants further down (`docker-compose.volume.yaml`, `.build.volume.yaml`) — Docker manages permissions inside a named volume for you.
+
 #### 3a. Quick interactive session (`--rm -it`)
 
 Good for a first look or a short test. The container is torn down on exit.
