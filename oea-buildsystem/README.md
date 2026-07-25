@@ -20,8 +20,8 @@ via `compose.sh` in this directory:
 | `oea-buildsystem:<branch>-YYYYMMDD`    | weekly cron / manual dispatch       | Periodic bake, pinned & immutable             |
 | `oea-buildsystem:<branch>`             | any bake if this is the highest tag | Moving latest for that branch                 |
 
-`<branch>` is a `build-enviroment` branch (currently `6.0` and
-`master`, add more via `matrix.include` in the workflow).
+`<branch>` is a `build-enviroment` branch (currently only `6.0` —
+upstream's default; add more via `matrix.include` in the workflow).
 
 Consumers should pull `:<branch>` for tracking or `:<branch>-vX.Y.Z`
 / `:<branch>-YYYYMMDD` for reproducible pins.

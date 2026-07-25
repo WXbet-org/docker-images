@@ -39,7 +39,7 @@ Driven from the [`oea-buildsystem` workflow](../.github/workflows/oea-buildsyste
 — this image is a byproduct of the consumable-image bake, never
 built in isolation in CI. Reasons for a bake happening at all:
 
-- Weekly cron for actively-tracked branches (`6.0`, `master`) —
+- Weekly cron for actively-tracked branches (currently only `6.0`) —
   keeps `make update` inside the container down to a week's delta
   and provides weekly rollback anchors.
 - Semver milestone (`git tag oea-buildsystem/vX.Y.Z`) — full

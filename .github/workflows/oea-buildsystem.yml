@@ -70,7 +70,6 @@ on:
         type: choice
         options:
           - '6.0'
-          - 'master'
         default: '6.0'
       push:
         description: 'Push results (unset = sanity build, no push)'
@@ -226,8 +225,6 @@ jobs:
         # matching inputs.branch (see gate step below).
         include:
           - branch: '6.0'
-            ubuntu_tag: '26.04'
-          - branch: 'master'
             ubuntu_tag: '26.04'
           # - branch: '5.6'
           #   ubuntu_tag: '22.04'
