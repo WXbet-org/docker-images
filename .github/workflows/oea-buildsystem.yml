@@ -1,0 +1,383 @@
+# ---------------------------------------------------------------------
+# oea-buildsystem — full pipeline: base bake + repo bake + compose.
+#
+# Triggers:
+#
+#   TAG PUSH (oea-buildsystem/vX.Y.Z):
+#     Job 1 (base):    matrix over supported Ubuntus -> pushes
+#                      oea-buildsystem-base:<ubuntu>-vX.Y.Z (+ moving
+#                      :<ubuntu> when this is the highest sortable
+#                      v-tag).
+#     Job 2 (compose): matrix over {branch, ubuntu_tag}, needs Job 1 ->
+#                      bakes oea-buildsystem-repo:<branch>-vX.Y.Z
+#                      (+ moving :<branch>), composes against the
+#                      freshly-built base:<ubuntu>-vX.Y.Z into
+#                      oea-buildsystem:<branch>-vX.Y.Z (+ moving
+#                      :<branch> when this is the highest v-tag).
+#     Job 2 pairs against Job 1's just-pushed PINNED base tag rather
+#     than the moving :<ubuntu> tag, so base<->composed pairing is
+#     deterministic per release (a later monthly cron shifting the
+#     moving :<ubuntu> tag can't retroactively change what
+#     :<branch>-vX.Y.Z was composed against).
+#
+#   MONTHLY CRON (1st of month, 03:00 UTC) — base apt refresh:
+#     Only Job 1 runs. Tags :<ubuntu>-YYYY.MM.DD + moves :<ubuntu>.
+#     Semver is reserved for deliberate Dockerfile / entrypoint
+#     changes; apt-security refreshes get their own date-stamp
+#     axis so :<ubuntu>-vX.Y.Z stays a clean Dockerfile-version
+#     anchor. Composed images pick up the refreshed base at the
+#     next weekly cron -- compose isn't triggered here.
+#
+#   WEEKLY CRON (Sunday 04:00 UTC) — repo + compose bake:
+#     Only Job 2 runs, against the current moving :<ubuntu> base.
+#     Tags :<branch>-YYYYMMDD + moves :<branch>. Point of the
+#     weekly cadence: keep `make update` inside the container down
+#     to a week's delta of upstream submodule bumps rather than
+#     letting it grow to months.
+#
+#   MANUAL (workflow_dispatch):
+#     Independent `base` / `compose` toggles. `push=false` (default)
+#     runs everything as a sanity build with no ghcr push. Compose
+#     uses the moving :<ubuntu> base unless `base_tag` overrides
+#     (useful for testing an unreleased base version).
+#
+# Base uses stock apt (no Ubuntu Pro/ESM), distro-default gcc.
+# ---------------------------------------------------------------------
+
+name: oea-buildsystem
+
+on:
+  push:
+    tags:
+      - 'oea-buildsystem/*'
+  schedule:
+    # Monthly base apt refresh -- 1st of each month, 03:00 UTC.
+    - cron: '0 3 1 * *'
+    # Weekly repo + compose bake -- Sunday 04:00 UTC.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Rebuild base image(s)'
+        type: boolean
+        default: false
+      compose:
+        description: 'Rebuild repo + compose consumable image(s)'
+        type: boolean
+        default: true
+      branch:
+        description: 'Branch to bake (used only when compose=true)'
+        type: choice
+        options:
+          - '6.0'
+          - 'master'
+        default: '6.0'
+      push:
+        description: 'Push results (unset = sanity build, no push)'
+        type: boolean
+        default: false
+      base_tag:
+        description: 'Base tag to compose against (blank = moving :<ubuntu>)'
+        default: ''
+
+env:
+  BASE_IMAGE:  ghcr.io/wxbet-org/oea-buildsystem-base
+  REPO_IMAGE:  ghcr.io/wxbet-org/oea-buildsystem-repo
+  COMP_IMAGE:  ghcr.io/wxbet-org/oea-buildsystem
+  BASE_DIR:    oea-buildsystem-base
+  REPO_DIR:    oea-buildsystem-repo
+  COMP_DIR:    oea-buildsystem
+  TAG_PREFIX:  oea-buildsystem/
+
+jobs:
+
+  # ================== JOB 1: base image(s) ==================
+  # Runs on tag push, monthly cron, or dispatch with base=true.
+  # Skipped on weekly cron and dispatch with base=false.
+
+  base:
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/oea-buildsystem/')) ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 3 1 * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.base)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu_tag: '26.04'
+          # - ubuntu_tag: '24.04'
+          # - ubuntu_tag: '22.04'
+
+    steps:
+      - name: Checkout (full history for tag sort)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine bake mode, version and :<ubuntu> eligibility
+        id: tags
+        run: |
+          # mode ∈ {release, cron, dispatch}
+          # push ∈ {1, 0}   version = vX.Y.Z (release) | YYYY.MM.DD (cron/dispatch)
+          # is_highest = whether the moving :<ubuntu> tag should be updated
+          U="${{ matrix.ubuntu_tag }}"
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+              MODE=release; PUSH=1
+              VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
+              HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
+              HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
+              if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
+                  IS_HIGHEST=1
+                  echo "Release ${VERSION} is the highest v-tag; moving :${U} will be updated."
+              else
+                  IS_HIGHEST=0
+                  echo "Release ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}); moving :${U} untouched."
+              fi
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+              MODE=cron; PUSH=1
+              VERSION=$(date -u +%Y.%m.%d)
+              IS_HIGHEST=1
+              echo "Monthly cron bake ${VERSION}; moving :${U} will be updated."
+          else
+              MODE=dispatch
+              VERSION=$(date -u +%Y.%m.%d)
+              if [ "${{ inputs.push }}" = "true" ]; then
+                  PUSH=1; IS_HIGHEST=1
+              else
+                  PUSH=0; IS_HIGHEST=0
+              fi
+              echo "workflow_dispatch base: push=${PUSH}, version=${VERSION}"
+          fi
+
+          echo "version=${VERSION}"       >> "$GITHUB_OUTPUT"
+          echo "push=${PUSH}"             >> "$GITHUB_OUTPUT"
+          echo "is_highest=${IS_HIGHEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        if: steps.tags.outputs.push == '1'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute base tag list
+        id: base_tags
+        run: |
+          V="${{ steps.tags.outputs.version }}"
+          U="${{ matrix.ubuntu_tag }}"
+          if [ "${{ steps.tags.outputs.push }}" != "1" ]; then
+              TAG_LIST="${BASE_IMAGE}:test-build-${U}"
+          elif [ "${{ steps.tags.outputs.is_highest }}" = "1" ]; then
+              TAG_LIST="${BASE_IMAGE}:${U}-${V},${BASE_IMAGE}:${U}"
+          else
+              TAG_LIST="${BASE_IMAGE}:${U}-${V}"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and, unless sanity, push) base image for ubuntu:${{ matrix.ubuntu_tag }}
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ env.BASE_DIR }}
+          push: ${{ steps.tags.outputs.push == '1' }}
+          tags: ${{ steps.base_tags.outputs.tag_list }}
+          build-args: |
+            UBUNTU_TAG=${{ matrix.ubuntu_tag }}
+            IMAGE_COMMIT=${{ github.sha }}
+            IMAGE_VERSION=${{ steps.tags.outputs.version }}
+          # no-cache: every bake should re-run apt-get update+install
+          # so security updates land in the new image.
+          no-cache: true
+
+  # ================== JOB 2: repo bake + compose ==================
+  # Runs on tag push (against freshly-built base), weekly cron
+  # (against moving :<ubuntu> base), or dispatch with compose=true.
+  # `needs: [base]` waits for Job 1; the `if:` allows Job 2 to still
+  # run when Job 1 was skipped (weekly cron / dispatch base=false).
+
+  compose:
+    needs: [base]
+    if: |
+      !cancelled() &&
+      (needs.base.result == 'success' || needs.base.result == 'skipped') && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/oea-buildsystem/')) ||
+        (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0') ||
+        (github.event_name == 'workflow_dispatch' && inputs.compose)
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # {branch → ubuntu_tag} pinning. Tag push and weekly cron
+        # bake every entry; workflow_dispatch runs only the entry
+        # matching inputs.branch (see gate step below).
+        include:
+          - branch: '6.0'
+            ubuntu_tag: '26.04'
+          - branch: 'master'
+            ubuntu_tag: '26.04'
+          # - branch: '5.6'
+          #   ubuntu_tag: '22.04'
+          # - branch: '5.5'
+          #   ubuntu_tag: '22.04'
+
+    steps:
+      - name: Skip non-matching matrix entries on workflow_dispatch
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && [ "${{ matrix.branch }}" != "${{ inputs.branch }}" ]; then
+              echo "Not this branch (matrix=${{ matrix.branch }}, requested=${{ inputs.branch }})."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+              echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout (for git tag sort + build-repo.sh + compose.sh)
+        if: steps.gate.outputs.skip == '0'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine bake mode, version, base pairing
+        if: steps.gate.outputs.skip == '0'
+        id: tags
+        run: |
+          BRANCH="${{ matrix.branch }}"
+          UBUNTU="${{ matrix.ubuntu_tag }}"
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+              MODE=release; PUSH=1
+              VERSION="${GITHUB_REF_NAME#${TAG_PREFIX}}"
+              HIGHEST_FULL=$(git tag -l "${TAG_PREFIX}*" | sort -V | tail -1)
+              HIGHEST_VERSION="${HIGHEST_FULL#${TAG_PREFIX}}"
+              if [ "${VERSION}" = "${HIGHEST_VERSION}" ]; then
+                  IS_HIGHEST=1
+                  echo "Release ${VERSION} is the highest v-tag; moving :${BRANCH} will be updated."
+              else
+                  IS_HIGHEST=0
+                  echo "Release ${VERSION} is not the highest (highest: ${HIGHEST_VERSION}); moving :${BRANCH} untouched."
+              fi
+              # Base was JUST built with :<ubuntu>-vX.Y.Z -- compose against
+              # that pinned tag for deterministic pairing.
+              BASE_TAG="${UBUNTU}-${VERSION}"
+
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+              MODE=cron; PUSH=1
+              VERSION=$(date -u +%Y%m%d)
+              IS_HIGHEST=1
+              # Weekly cron uses the current moving :<ubuntu> base tag.
+              BASE_TAG="${UBUNTU}"
+              echo "Weekly cron bake ${VERSION}; moving :${BRANCH} will be updated."
+
+          else
+              MODE=dispatch
+              VERSION=$(date -u +%Y%m%d)
+              if [ "${{ inputs.push }}" = "true" ]; then
+                  PUSH=1; IS_HIGHEST=1
+              else
+                  PUSH=0; IS_HIGHEST=0
+              fi
+              # Compose input can override the base tag.
+              BT_INPUT="${{ inputs.base_tag }}"
+              if [ -z "${BT_INPUT}" ]; then
+                  BASE_TAG="${UBUNTU}"
+              else
+                  BASE_TAG="${BT_INPUT}"
+              fi
+              echo "workflow_dispatch compose: push=${PUSH}, version=${VERSION}, base=${BASE_TAG}"
+          fi
+
+          echo "branch=${BRANCH}"         >> "$GITHUB_OUTPUT"
+          echo "ubuntu=${UBUNTU}"         >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"       >> "$GITHUB_OUTPUT"
+          echo "push=${PUSH}"             >> "$GITHUB_OUTPUT"
+          echo "is_highest=${IS_HIGHEST}" >> "$GITHUB_OUTPUT"
+          echo "base_tag=${BASE_TAG}"     >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.skip == '0'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        if: steps.gate.outputs.skip == '0' && steps.tags.outputs.push == '1'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # =============== PHASE 1: build + push repo image ===============
+
+      - name: Clone build-enviroment repo (${{ steps.tags.outputs.branch }})
+        if: steps.gate.outputs.skip == '0'
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          chmod +x build-repo.sh
+          ./build-repo.sh "${{ steps.tags.outputs.branch }}"
+
+      - name: Compute repo tag list
+        if: steps.gate.outputs.skip == '0'
+        id: repo_tags
+        run: |
+          B="${{ steps.tags.outputs.branch }}"
+          V="${{ steps.tags.outputs.version }}"
+          if [ "${{ steps.tags.outputs.push }}" != "1" ]; then
+              TAG_LIST="${REPO_IMAGE}:test-build"
+          elif [ "${{ steps.tags.outputs.is_highest }}" = "1" ]; then
+              TAG_LIST="${REPO_IMAGE}:${B}-${V},${REPO_IMAGE}:${B}"
+          else
+              TAG_LIST="${REPO_IMAGE}:${B}-${V}"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and, unless sanity, push) repo image
+        if: steps.gate.outputs.skip == '0'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ env.REPO_DIR }}
+          push: ${{ steps.tags.outputs.push == '1' }}
+          tags: ${{ steps.repo_tags.outputs.tag_list }}
+          build-args: |
+            BRANCH=${{ steps.tags.outputs.branch }}
+          # no-cache: repo/ is regenerated per run; caching just
+          # hides upstream drift.
+          no-cache: true
+
+      # =============== PHASE 2: compose + push consumable image ===============
+
+      - name: Install regctl
+        if: steps.gate.outputs.skip == '0' && steps.tags.outputs.push == '1'
+        uses: regclient/actions/regctl-installer@main
+
+      - name: Compose ${{ env.COMP_IMAGE }}:${{ steps.tags.outputs.branch }}-${{ steps.tags.outputs.version }}
+        if: steps.gate.outputs.skip == '0' && steps.tags.outputs.push == '1'
+        env:
+          BASE: ${{ env.BASE_IMAGE }}:${{ steps.tags.outputs.base_tag }}
+          REPO: ${{ env.REPO_IMAGE }}:${{ steps.tags.outputs.branch }}-${{ steps.tags.outputs.version }}
+          DST:  ${{ env.COMP_IMAGE }}:${{ steps.tags.outputs.branch }}-${{ steps.tags.outputs.version }}
+        run: |
+          chmod +x "${COMP_DIR}/compose.sh"
+          "${COMP_DIR}/compose.sh"
+
+      - name: Also move :<branch> composed tag (if this is the highest)
+        if: steps.gate.outputs.skip == '0' && steps.tags.outputs.push == '1' && steps.tags.outputs.is_highest == '1'
+        env:
+          BASE: ${{ env.BASE_IMAGE }}:${{ steps.tags.outputs.base_tag }}
+          REPO: ${{ env.REPO_IMAGE }}:${{ steps.tags.outputs.branch }}
+          DST:  ${{ env.COMP_IMAGE }}:${{ steps.tags.outputs.branch }}
+        run: |
+          "${COMP_DIR}/compose.sh"
