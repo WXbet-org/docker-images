@@ -1,18 +1,24 @@
 #!/bin/bash
 # oea-buildsystem entrypoint.
 #
-# Runs one or more bitbake builds sequentially -- one MACHINE per
-# make invocation, everything on volumes so tmp/sstate/sources/deploy
-# survive container restarts. After each MACHINE finishes (success or
-# fail) sstate + sources are synced to MinIO immediately, and deploy
-# is synced on success. So a container that dies at MACHINE 30/50
-# still leaves 29 MACHINEs worth of sstate + deploy in the shared
-# store for anyone else to pick up.
+# Continuous MACHINE loop: builds every MACHINE in $MACHINES in
+# round-robin, forever. After each MACHINE (success or fail) sstate +
+# sources are mc-mirrored to MinIO, deploy on success. Persistent
+# state file on the /temp volume tracks the last completed MACHINE
+# so `docker compose stop` / `compose down` / SIGTERM cleanly finish
+# the current MACHINE and the next `compose up` resumes where it
+# stopped -- pause and continue between MACHINEs works out of the box.
+#
+# Dev / debug: attach any time via `docker compose exec oea-build bash`
+# or `ssh -p 2222 builder@localhost` (password `builder`). To force a
+# specific starting point, set SKIP_TO_MACHINE=<name> before starting
+# the container, or edit /temp/.oea-last-machine and restart.
 #
 # Parameters (env-vars):
 #   MACHINES              REQUIRED. Space-separated list, one make invocation each.
 #                         Fallback: single MACHINE env-var.
 #                         e.g. MACHINES="dm900 dm920 vuduo4k"
+#   SKIP_TO_MACHINE       optional. Force first-cycle start point (overrides state file).
 #   DISTRO                default: openatv
 #   DISTRO_TYPE           default: release
 #   BRANCH                default: 6.0     (used for MinIO bucket naming: sstate-${DISTRO}-${BRANCH})
@@ -139,78 +145,116 @@ if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
 
-# --- 9. Per-MACHINE build + immediate MinIO sync -----------------------
-OK=""
-FAILED=""
-FAIL_DETAIL=""
+# --- 9. Resume state + graceful stop signal handling -------------------
+# State file survives container restarts (lives on /temp volume).
+# Records the LAST completed MACHINE so we can resume from the next
+# one on restart, giving pause/stop-and-continue semantics.
+STATE_FILE="/temp/.oea-last-machine"
+MACHINES_ARR=($MACHINES)
+N=${#MACHINES_ARR[@]}
 
-for M in $MACHINES; do
+# Where to start this container's first cycle.
+START_IDX=0
+if [ -n "${SKIP_TO_MACHINE:-}" ]; then
+    # Explicit override -- start with this MACHINE.
+    for i in "${!MACHINES_ARR[@]}"; do
+        if [ "${MACHINES_ARR[$i]}" = "$SKIP_TO_MACHINE" ]; then
+            START_IDX=$i
+            echo ">>> SKIP_TO_MACHINE=$SKIP_TO_MACHINE (index $START_IDX)"
+            break
+        fi
+    done
+elif [ -f "$STATE_FILE" ]; then
+    # Resume: pick up after the last completed MACHINE.
+    LAST=$(cat "$STATE_FILE" 2>/dev/null || echo "")
+    for i in "${!MACHINES_ARR[@]}"; do
+        if [ "${MACHINES_ARR[$i]}" = "$LAST" ]; then
+            START_IDX=$(( (i + 1) % N ))
+            echo ">>> Resuming: last completed was $LAST, continuing with ${MACHINES_ARR[$START_IDX]}"
+            break
+        fi
+    done
+fi
+
+# SIGTERM / SIGINT: finish the currently-running MACHINE cleanly then
+# exit. Compose/Komodo's "stop container" is graceful this way -- no
+# half-built MACHINE, and the state file points at what was completed
+# last so the next start resumes correctly.
+STOP_REQUESTED=0
+trap 'echo ">>> Stop signal received -- will exit after current MACHINE"; STOP_REQUESTED=1' TERM INT
+
+# --- 10. Infinite MACHINE loop (round-robin, resumable) ----------------
+CYCLE=0
+while true; do
+    CYCLE=$((CYCLE + 1))
     echo
     echo "================================================================="
-    echo "  START  MACHINE=$M"
+    echo "  === CYCLE $CYCLE ==="
     echo "================================================================="
-    BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
-    mkdir -p "$BUILD_DIR"
-    # Wire per-MACHINE tmp/ onto /temp/$M, then tmp/deploy onto /deploy/$M.
-    rm -rf "$BUILD_DIR/tmp"
-    mkdir -p "/temp/$M" "/deploy/$M"
-    ln -s "/temp/$M" "$BUILD_DIR/tmp"
-    rm -rf "/temp/$M/deploy"
-    ln -s "/deploy/$M" "/temp/$M/deploy"
 
-    if make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION"; then
-        RC=0
-        OK="$OK $M"
+    for offset in $(seq 0 $((N - 1))); do
+        IDX=$(( (START_IDX + offset) % N ))
+        M="${MACHINES_ARR[$IDX]}"
+
+        echo
         echo "================================================================="
-        echo "  OK    MACHINE=$M"
+        echo "  START  MACHINE=$M  (cycle $CYCLE, position $((offset + 1))/$N)"
         echo "================================================================="
-    else
-        RC=$?
-        FAILED="$FAILED $M"
-        echo "================================================================="
-        echo "  FAIL  MACHINE=$M (rc=$RC)"
-        echo "================================================================="
-        # bitbake writes timestamped cooker logs; grab the newest for the fail report.
-        COOKER_LOG=$(ls -1t "/temp/$M/log/cooker/$M"/*.log 2>/dev/null | head -1 || true)
-        if [ -n "$COOKER_LOG" ]; then
-            FAIL_SUMMARY=$(grep -E "^ERROR:" "$COOKER_LOG" 2>/dev/null || echo "  (log exists but no ERROR markers: $COOKER_LOG)")
+        BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
+        mkdir -p "$BUILD_DIR"
+        rm -rf "$BUILD_DIR/tmp"
+        mkdir -p "/temp/$M" "/deploy/$M"
+        ln -s "/temp/$M" "$BUILD_DIR/tmp"
+        rm -rf "/temp/$M/deploy"
+        ln -s "/deploy/$M" "/temp/$M/deploy"
+
+        if make MACHINE="$M" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION"; then
+            RC=0
+            echo "================================================================="
+            echo "  OK    MACHINE=$M  (cycle $CYCLE)"
+            echo "================================================================="
         else
-            FAIL_SUMMARY="  (no cooker log found under /temp/$M/log/cooker/$M/)"
+            RC=$?
+            echo "================================================================="
+            echo "  FAIL  MACHINE=$M  (cycle $CYCLE, rc=$RC)"
+            echo "================================================================="
+            COOKER_LOG=$(ls -1t "/temp/$M/log/cooker/$M"/*.log 2>/dev/null | head -1 || true)
+            if [ -n "$COOKER_LOG" ]; then
+                echo "  ERROR markers from $COOKER_LOG:"
+                grep -E "^ERROR:" "$COOKER_LOG" 2>/dev/null || echo "  (no ERROR markers in log)"
+            else
+                echo "  (no cooker log found under /temp/$M/log/cooker/$M/)"
+            fi
         fi
-        FAIL_DETAIL="$FAIL_DETAIL
 
---- MACHINE=$M (rc=$RC) ---
-$FAIL_SUMMARY"
-    fi
-
-    # --- MinIO sync (per-MACHINE, right after the build) ---
-    if [ "$MC_ENABLED" = "1" ]; then
-        echo ">>> mc mirror sstate + sources -> MinIO"
-        mc mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
-            || echo "!!! sstate sync failed (continuing)"
-        mc mirror --overwrite --newer /sources/      "local/sources/" \
-            || echo "!!! sources sync failed (continuing)"
-        if [ "$RC" = "0" ]; then
-            echo ">>> mc mirror deploy/$M -> MinIO"
-            mc mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
-                || echo "!!! deploy sync failed for $M"
-        else
-            echo ">>> skipping deploy sync for $M (build failed, artefacts may be partial)"
+        # --- MinIO sync (per-MACHINE, right after the build) ---
+        if [ "$MC_ENABLED" = "1" ]; then
+            echo ">>> mc mirror sstate + sources -> MinIO"
+            mc mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
+                || echo "!!! sstate sync failed (continuing)"
+            mc mirror --overwrite --newer /sources/      "local/sources/" \
+                || echo "!!! sources sync failed (continuing)"
+            if [ "$RC" = "0" ]; then
+                echo ">>> mc mirror deploy/$M -> MinIO"
+                mc mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
+                    || echo "!!! deploy sync failed for $M"
+            else
+                echo ">>> skipping deploy sync for $M (build failed, artefacts may be partial)"
+            fi
         fi
-    fi
+
+        # Persist progress -- write only AFTER the build (whether OK or
+        # FAIL). An interrupted mid-build MACHINE stays unrecorded so
+        # the next start re-does it from wherever it got to.
+        echo "$M" > "$STATE_FILE"
+
+        # Graceful stop check between MACHINEs.
+        if [ "$STOP_REQUESTED" = "1" ]; then
+            echo ">>> Stopping after $M (graceful exit)"
+            exit 0
+        fi
+    done
+
+    # Cycle complete -- next cycle starts at index 0.
+    START_IDX=0
 done
-
-# --- 10. Report + exit code -------------------------------------------
-echo
-echo "================================================================="
-echo "  BUILDS DONE"
-[ -n "$OK"     ] && echo "    OK   :$OK"
-[ -n "$FAILED" ] && echo "    FAIL :$FAILED"
-echo "================================================================="
-if [ -n "$FAILED" ]; then
-    echo "  FAILURE DETAILS"
-    echo "  (full cooker logs live at /temp/<MACHINE>/log/cooker/<MACHINE>/)"
-    echo "================================================================="
-    echo "$FAIL_DETAIL"
-    exit 1
-fi

@@ -1,10 +1,11 @@
-# oea-buildsystem -- one-shot batch build, N MACHINEs per container.
+# oea-buildsystem -- continuous MACHINE loop, N MACHINEs per container.
 #
 # Same lifecycle as docker-compose.build.volume.yaml (entrypoint loops
-# over $MACHINES, mc-mirror to MinIO after each MACHINE), but the four
-# storage volumes are bind-mounted from host paths instead of
-# Docker-managed named volumes. Lets you `ls /var/lib/oea-build/...`
-# from the host or point at a shared farm filesystem.
+# over $MACHINES round-robin forever, mc-mirror to MinIO after each
+# MACHINE, state file resumes on restart), but the four storage
+# volumes are bind-mounted from host paths instead of Docker-managed
+# named volumes. Lets you `ls /var/lib/oea-build/...` from the host or
+# point at a shared farm filesystem.
 #
 # WARNING -- UID/GID: the container runs as `builder` (uid/gid 1000).
 # All four bind-mount targets on the host MUST be owned by 1000 or
@@ -38,6 +39,8 @@
 #     DISTRO=openatv                  distro variant  (default: openatv)
 #     DISTRO_TYPE=release             (default: release)
 #     ACTION=image                    make target     (default: image)
+#     SKIP_TO_MACHINE=vuduo4k         force first-cycle start (overrides state file)
+#     SSH_PORT=2323                   host port for sshd (default: 2222)
 #
 #   MinIO integration (all optional):
 #     SSTATE_MIRROR_URL=...
@@ -55,8 +58,12 @@ services:
     networks:
       - oea-build
 
+    ports:
+      - "${SSH_PORT:-2222}:22"
+
     environment:
       MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"dm900 dm920\")}"
+      SKIP_TO_MACHINE: "${SKIP_TO_MACHINE:-}"
       DISTRO: "${DISTRO:-openatv}"
       DISTRO_TYPE: "${DISTRO_TYPE:-release}"
       BRANCH: "${BRANCH:-6.0}"
@@ -85,7 +92,12 @@ services:
         soft: 65536
         hard: 65536
 
-    restart: "no"
+    # Long-running loop: survive host reboots. `docker compose stop`
+    # sends SIGTERM -- entrypoint finishes current MACHINE and exits
+    # gracefully. State file resumes on next `compose up`.
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 8h    # allow current MACHINE to finish
 
 networks:
   oea-build:

@@ -61,30 +61,35 @@ Host prerequisites (`kernel.apparmor_restrict_unprivileged_userns=0`
 
 ## Compose stacks (Komodo / Portainer / plain compose)
 
-Four ready-made compose files cover the two axes {batch vs dev} ×
+Four ready-made compose files cover the two axes {auto-loop vs dev} ×
 {bind-mount vs named volume}:
 
-| File                                | Lifecycle                                  | Storage                     |
-|-------------------------------------|--------------------------------------------|-----------------------------|
-| [`docker-compose.build.volume.yaml`](docker-compose.build.volume.yaml) | one-shot: setup → build every MACHINE in `$MACHINES` → exit | Docker-managed volumes |
-| [`docker-compose.build.mount.yaml`](docker-compose.build.mount.yaml)   | one-shot: setup → build every MACHINE in `$MACHINES` → exit | Bind-mounted host paths |
-| [`docker-compose.volume.yaml`](docker-compose.volume.yaml)             | long-running: setup → `sleep infinity` (SSH + exec)         | Docker-managed volumes |
-| [`docker-compose.mount.yaml`](docker-compose.mount.yaml)               | long-running: setup → `sleep infinity` (SSH + exec)         | Bind-mounted host paths |
+| File                                | Lifecycle                                                                            | Storage                     |
+|-------------------------------------|--------------------------------------------------------------------------------------|-----------------------------|
+| [`docker-compose.build.volume.yaml`](docker-compose.build.volume.yaml) | continuous: round-robin through `$MACHINES` forever, resumable | Docker-managed volumes |
+| [`docker-compose.build.mount.yaml`](docker-compose.build.mount.yaml)   | continuous: round-robin through `$MACHINES` forever, resumable | Bind-mounted host paths |
+| [`docker-compose.volume.yaml`](docker-compose.volume.yaml)             | long-running idle: setup → `sleep infinity` (SSH + exec)        | Docker-managed volumes |
+| [`docker-compose.mount.yaml`](docker-compose.mount.yaml)               | long-running idle: setup → `sleep infinity` (SSH + exec)        | Bind-mounted host paths |
 
-**Batch (`.build.` variants):** takes `MACHINES="dm900 dm920 …"`,
-loops sequentially. Ideal for CI / farm workers / one-off Komodo
-stacks. For the 4-containers × 50-MACHINEs pattern: deploy 4 stacks
-with different `-p` project names and disjoint MACHINEs subsets —
-MinIO glues them together at real time.
+**Auto-loop (`.build.` variants):** takes `MACHINES="dm900 dm920 …"`
+and cycles through them round-robin, forever. `docker compose stop`
+sends SIGTERM → entrypoint finishes the current MACHINE and exits
+cleanly. `compose up` resumes from the next MACHINE via state file on
+`/temp`. `docker compose pause` freezes mid-build (kernel-level, RAM
+kept), `unpause` continues. For the 4-containers × 50-MACHINEs farm
+pattern: deploy 4 stacks with different `-p` project names and
+disjoint `MACHINES` subsets — MinIO glues them together in real time.
 
 **Dev (no `.build.` prefix):** takes single `MACHINE=dm900`, sets up
-the container, then idles. Attach via `docker compose exec oea-build
-bash` or `ssh -p 2222 builder@localhost` (password `builder`) and
-drive builds by hand.
+the container, then idles without auto-building. Attach via
+`docker compose exec oea-build bash` or `ssh -p 2222 builder@localhost`
+(password `builder`) and drive builds by hand — for one-off recipe
+debugs, `menuconfig`, poking at bitbake internals.
 
-All variants join the external `oea-build` docker network so MinIO
-is reachable via hostname `minio`. Volumes are per compose project
-(via `-p`) — different project names get independent storage.
+Either variant lets you SSH in / exec at runtime. All variants join
+the external `oea-build` docker network so MinIO is reachable via
+hostname `minio`. Volumes are per compose project (via `-p`) —
+different project names get independent storage.
 
 ## Composition
 

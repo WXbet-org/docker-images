@@ -108,23 +108,35 @@ On container start:
    warning per container recreate). Login: `builder` / `builder`.
 5. If a `command:` was passed (dev stacks pass `sleep infinity`),
    `exec`s it here and skips the build loop. Otherwise:
-6. Loops over `$MACHINES` (space-separated). For each MACHINE `$M`:
+6. Determines the resume point:
+   - `SKIP_TO_MACHINE=<name>` → force that as start
+   - else state file `/temp/.oea-last-machine` → resume with next
+   - else start at first MACHINE in `$MACHINES`
+7. Enters an **infinite** round-robin loop through `$MACHINES`. For
+   each MACHINE `$M`:
    - Symlinks per-MACHINE paths: `builds/$DISTRO/$DISTRO_TYPE/$M/tmp`
      → `/temp/$M`, then `/temp/$M/deploy` → `/deploy/$M`.
    - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
-   - If MinIO write creds are set, `mc mirror`s sstate + sources
-     immediately to MinIO (success or fail — the sstate blobs and
-     source tarballs are useful either way). On success, also mirrors
-     `/deploy/$M/` to MinIO.
-7. Exits 0 if every MACHINE succeeded, 1 otherwise. Fail report lists
-   the offending MACHINEs with their ERROR: markers from the cooker
-   log.
+   - If MinIO write creds are set: `mc mirror` sstate + sources
+     (success or fail — the intermediate blobs are useful either
+     way). On success, also mirrors `/deploy/$M/` to MinIO.
+   - Writes `$M` to `/temp/.oea-last-machine` so a later restart
+     resumes with the next MACHINE.
+   - Checks for pending SIGTERM/SIGINT — if received, exits 0
+     cleanly (graceful stop between MACHINEs).
+8. When `$MACHINES` is exhausted, cycles back to index 0 forever.
+
+`docker compose stop` sends SIGTERM → entrypoint finishes the current
+MACHINE, then exits. `compose up` resumes from the next MACHINE. For
+an instant freeze (memory retained), use `docker compose pause`;
+`unpause` continues mid-build.
 
 ## Environment variables
 
 | Name | Default | Purpose |
 |------|---------|---------|
 | `MACHINES` | *(required)* | Space-separated list, e.g. `"dm900 dm920 vuduo4k"`. Fallback: single `MACHINE=`. |
+| `SKIP_TO_MACHINE` | *(unset)* | Force first-cycle start point (overrides state file). |
 | `DISTRO` | `openatv` | Distro built from `build-enviroment`. |
 | `DISTRO_TYPE` | `release` | e.g. `release`, `experimental`. |
 | `BRANCH` | `6.0` | `build-enviroment` branch. Used for MinIO bucket naming (`sstate-${DISTRO}-${BRANCH}`). |

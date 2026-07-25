@@ -1,10 +1,16 @@
-# oea-buildsystem -- one-shot batch build, N MACHINEs per container.
+# oea-buildsystem -- continuous MACHINE loop, N MACHINEs per container.
 #
 # Container starts, entrypoint refreshes the recipe tree, then loops
-# over every MACHINE in $MACHINES with a make image. After each MACHINE
-# (success or fail) sstate + sources are mc-mirrored to MinIO, on
-# success deploy is mirrored too. Exit code carries the aggregate result
-# (0 = all OK, 1 = at least one MACHINE failed).
+# over $MACHINES round-robin FOREVER. After each MACHINE (success or
+# fail) sstate + sources are mc-mirrored to MinIO immediately, deploy
+# on success. A state file on /temp records the last completed MACHINE
+# so `docker compose stop` / `down` / SIGTERM cleanly finish the
+# current MACHINE and the next `up` resumes from the following one.
+#
+# Pause: `docker compose pause` (instant, memory stays) or
+#        `docker compose stop` (graceful, waits for current MACHINE).
+# Debug: `docker compose exec oea-build bash` or
+#        `ssh -p ${SSH_PORT:-2222} builder@localhost` (password: builder).
 #
 # For the "4 containers x 50 MACHINEs" farm pattern: deploy 4 stacks
 # with different -p project names and different MACHINES subsets. All
@@ -29,6 +35,8 @@
 #     DISTRO=openatv                  distro variant  (default: openatv)
 #     DISTRO_TYPE=release             release/experimental (default: release)
 #     ACTION=image                    make target     (default: image)
+#     SKIP_TO_MACHINE=vuduo4k         force first-cycle start point (overrides state file)
+#     SSH_PORT=2323                   host port for sshd (default: 2222)
 #
 #   MinIO integration (all optional; omit any block to disable):
 #     SSTATE_MIRROR_URL=...           read-side sstate mirror
@@ -59,8 +67,14 @@ services:
       # pre-created by the minio stack (`docker network create oea-build`).
       - oea-build
 
+    ports:
+      # sshd runs inside the container so you can debug a live loop.
+      # Login as `builder` with password `builder`.
+      - "${SSH_PORT:-2222}:22"
+
     environment:
       MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"dm900 dm920\")}"
+      SKIP_TO_MACHINE: "${SKIP_TO_MACHINE:-}"
       DISTRO: "${DISTRO:-openatv}"
       DISTRO_TYPE: "${DISTRO_TYPE:-release}"
       BRANCH: "${BRANCH:-6.0}"
@@ -92,8 +106,12 @@ services:
         soft: 65536
         hard: 65536
 
-    # One-shot batch job -- exit code carries the aggregate build result.
-    restart: "no"
+    # Long-running loop: survive host reboots. `docker compose stop`
+    # sends SIGTERM -- entrypoint finishes current MACHINE and exits
+    # gracefully. State file resumes on next `compose up`.
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 8h    # allow current MACHINE to finish
 
 networks:
   oea-build:
