@@ -72,6 +72,20 @@ echo "================================================================="
 
 cd /work
 
+# --- 1b. Ensure mount roots are writable by builder --------------------
+# Docker-managed named volumes initialize their mount root as root:root
+# when the volume is first attached to a container. The builder user
+# (uid 1000) can't write there without a one-time chown. Bind-mounts
+# from an already-1000-owned host path skip this cleanly (the [ ! -w ]
+# check is false). Only the top-level dir is chowned -- avoids a slow
+# recursive chown over a 200 GB /temp.
+for d in /temp /sstate-cache /sources /deploy; do
+    if [ -d "$d" ] && [ ! -w "$d" ]; then
+        echo ">>> chown $d (mount root not writable by builder)"
+        sudo chown builder:builder "$d"
+    fi
+done
+
 # --- 2. git identity ---------------------------------------------------
 git config --global --get user.email >/dev/null 2>&1 \
     || git config --global user.email "builder@oea-buildsystem.local"
