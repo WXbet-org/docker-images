@@ -272,19 +272,16 @@ build_machine() {
     fi
 
     # --- MinIO sync (per-MACHINE, right after the build) ---
+    # sstate + sources are the two shared cross-host caches. deploy
+    # is intentionally NOT synced to MinIO -- artefacts live on the
+    # shared oea_deploy volume and get published from there by a
+    # separate downstream job (feed hosting, rsync, ...).
     if [ "$MC_ENABLED" = "1" ]; then
         echo ">>> mcli mirror sstate + sources -> MinIO"
         mcli mirror --overwrite --newer /sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \
             || echo "!!! sstate sync failed (continuing)"
         mcli mirror --overwrite --newer /sources/      "local/sources/" \
             || echo "!!! sources sync failed (continuing)"
-        if [ "$RC" = "0" ]; then
-            echo ">>> mcli mirror deploy/$M -> MinIO"
-            mcli mirror --overwrite --newer "/deploy/$M/" "local/deploy-${DISTRO}-${BRANCH}/$M/" \
-                || echo "!!! deploy sync failed for $M"
-        else
-            echo ">>> skipping deploy sync for $M (build failed / stopped, artefacts may be partial)"
-        fi
     fi
 
     return $RC

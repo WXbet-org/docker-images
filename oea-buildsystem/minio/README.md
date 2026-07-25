@@ -1,21 +1,23 @@
 # minio — object store for the oea-buildsystem pipeline
 
-Runs a single MinIO instance that serves three roles for the
+Runs a single MinIO instance that serves two roles for the
 OE-Alliance build farm (OpenATV and any other distro built from the
 `oe-alliance/build-enviroment` tree):
 
-- **sstate-mirror** — read-only HTTP backstore for bitbake's
-  `SSTATE_MIRRORS`. Every worker pulls hits from here, misses are
-  computed locally and synced back after successful build.
-- **downloads mirror** — HTTP cache for `PREMIRRORS`. Cold builds
+- **sstate-mirror** — HTTP backstore for bitbake's `SSTATE_MIRRORS`.
+  Every worker pulls hits from here, misses are computed locally and
+  synced back after each MACHINE via `mcli mirror`.
+- **sources mirror** — HTTP cache for `PREMIRRORS`. Cold builds
   populate it; warm builds skip upstream fetches entirely.
-- **deploy artefact store** — where every worker's per-MACHINE
-  `.deb` + feed indexes end up after build.
 
-All three are just S3 buckets on the same MinIO instance. Buckets
-holding read-only mirrors get an anonymous-download policy so bitbake
-doesn't need credentials on the read path. Write access uses a
-dedicated service account.
+Both are S3 buckets on the same MinIO instance. Buckets get an
+anonymous-download policy so bitbake doesn't need credentials on the
+read path. Write access uses a dedicated service account (`builder`).
+
+Deploy artefacts (kernel, rootfs, `.ipk` feeds) do NOT flow through
+MinIO -- they live on the shared `oea_deploy` Docker volume on the
+build host, and a separate downstream job (feed hosting, rsync)
+publishes them from there.
 
 ## Deploy
 
@@ -63,14 +65,13 @@ credentials above.
 
 ## First-time bucket setup
 
-Buckets are named per (DISTRO, BRANCH) tuple for sstate + deploy, and
-one shared `sources` bucket for upstream tarballs (downloads are
-distro-agnostic). Create the trio for each (DISTRO, BRANCH) you
-build, and one `sources` bucket globally.
+One sstate bucket per (DISTRO, BRANCH) tuple, plus one global
+`sources` bucket for upstream tarballs (distro-agnostic).
 
 Below is the setup for the current default `openatv/6.0`. Repeat
-the first three lines with a different `<DISTRO>-<BRANCH>` when you
-add a new distro or branch.
+the `sstate-…` line with a different `<DISTRO>-<BRANCH>` when you
+add a new distro or branch. The `sources` bucket + service account
+only get created once.
 
 You have three options for running `mc` for the setup:
 
@@ -101,32 +102,30 @@ mc alias set local http://<host>:9000 admin <PW>
 Then all three variants share the same command syntax:
 
 ```sh
-# Buckets for the openatv/6.0 combination
+# Sstate bucket for the openatv/6.0 combination.
+# Repeat this line for each additional (DISTRO, BRANCH) you build.
 DISTRO=openatv
 BRANCH=6.0
 mc mb "local/sstate-${DISTRO}-${BRANCH}"
-mc mb "local/deploy-${DISTRO}-${BRANCH}"
 
-# Global sources bucket (only once, not per distro/branch)
+# Global sources bucket (only once, distro-agnostic upstream tarballs)
 mc mb local/sources
 
-# Anonymous read for the two mirror buckets that bitbake pulls from
+# Anonymous read on both -- bitbake pulls without credentials.
 mc anonymous set download "local/sstate-${DISTRO}-${BRANCH}"
 mc anonymous set download local/sources
 
-# `deploy-*` intentionally stays private -- if you publish it, do it
-# via a separate nginx sidecar that reads from a signed URL or copies
-# to a public bucket / rsync target.
-
 # Service user for the entrypoint's post-MACHINE sync (write access
-# to sstate + sources + deploy buckets).
+# to sstate + sources buckets).
 #
 # The second arg to `admin user add` is a secret key of YOUR choice
-# (min. 8 chars). Pick something long + random -- generate with e.g.
-# `openssl rand -base64 32` or `pwgen 32 1`. Save it somewhere
-# durable (password manager, Komodo stack secrets, ...) because MinIO
-# won't show it again after this command runs.
-BUILDER_SECRET=$(openssl rand -base64 32)
+# (min. 8 chars). Pick something long + random -- generated below
+# from /dev/urandom (portable across busybox / alpine / ubuntu, no
+# openssl needed since the minio container ships without it). Save
+# the printed value somewhere durable (password manager, Komodo
+# stack secrets, ...) because MinIO won't show it again after this
+# command runs.
+BUILDER_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '\n/+' | head -c 32)
 echo "SAVE THIS: MINIO_SECRET_KEY for the oea build stacks = $BUILDER_SECRET"
 
 mc admin user add local builder "$BUILDER_SECRET"
@@ -149,6 +148,44 @@ Verify the setup:
 mc anonymous get "local/sstate-${DISTRO}-${BRANCH}"   # -> "download"
 mc admin user list local                              # lists `builder`
 mc admin user info local builder                      # policy: readwrite
+```
+
+## Pre-seeding an existing sources directory
+
+If you already have a populated OE downloads dir on the build host
+(from a previous non-container-based build), upload it to the
+`sources` bucket once so containers don't have to fetch from
+upstream on first run.
+
+Run this on the build host, with `<PATH>` = your existing dir
+(e.g. `/home/wxbet/oe-alliance/sources`):
+
+```sh
+# Pull the admin creds out of the running minio container:
+MINIO_ADMIN_USER=$(docker inspect minio --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^MINIO_ROOT_USER='     | cut -d= -f2)
+MINIO_ADMIN_PASS=$(docker inspect minio --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^MINIO_ROOT_PASSWORD=' | cut -d= -f2)
+
+# Throwaway mc container on the shared docker network,
+# mount the existing sources dir read-only, mirror to MinIO:
+docker run --rm --network oea-build \
+    -v <PATH>:/src:ro \
+    -e MC_HOST_local="http://${MINIO_ADMIN_USER}:${MINIO_ADMIN_PASS}@minio:9000" \
+    minio/mc:latest \
+    mirror /src/ local/sources/
+```
+
+Takes tens of minutes for a few GB (single-host loopback network, no
+actual bytes leave the machine). Subsequent runs with the same
+command are cheap because `mc mirror` skips already-present objects.
+
+Verify afterwards from inside the minio container:
+
+```sh
+docker exec -it minio sh -c '
+    export MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000"
+    mc du local/sources/
+    mc ls local/sources/ | head
+'
 ```
 
 ## Consuming from build containers
@@ -188,19 +225,22 @@ env-vars are set).
 ## Post-MACHINE sync (from inside the container)
 
 The entrypoint does the sync itself after each MACHINE completes.
-For every MACHINE in `$MACHINES`:
+For every MACHINE in `$MACHINES`, whether the build succeeded or
+failed:
 
 ```
-mc mirror --overwrite --newer /sstate-cache/   local/sstate-${DISTRO}-${BRANCH}/
-mc mirror --overwrite --newer /sources/        local/sources/
-# on success only:
-mc mirror --overwrite --newer /deploy/<MACHINE>/  local/deploy-${DISTRO}-${BRANCH}/<MACHINE>/
+mcli mirror --overwrite --newer /sstate-cache/   local/sstate-${DISTRO}-${BRANCH}/
+mcli mirror --overwrite --newer /sources/        local/sources/
 ```
 
-So warm sstate flows to MinIO in real time as MACHINEs finish, not
-at the end of a 50-MACHINE batch. A container that dies at MACHINE
-30/50 still leaves 29 MACHINEs worth of sstate + deploy on MinIO for
-the next attempt or other concurrent containers.
+So warm sstate + fetched sources flow to MinIO in real time as
+MACHINEs finish, not at the end of a 50-MACHINE batch. A container
+that dies at MACHINE 30/50 still leaves 29 MACHINEs worth of sstate
+on MinIO for the next attempt or other concurrent containers.
+
+Deploy artefacts are NOT synced to MinIO -- they land on the shared
+`oea_deploy` Docker volume, and a separate publishing job takes it
+from there (see [`oea-buildsystem/README.md`](../README.md)).
 
 ## Backup
 

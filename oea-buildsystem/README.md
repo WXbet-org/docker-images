@@ -51,9 +51,10 @@ for full detail.
 
 ### 2. Deploy the shared MinIO stack (once per farm)
 
-The build containers write sstate + sources + deploy back to MinIO
-after each MACHINE. Deploy that stack first — details and one-time
-bucket setup in [`minio/README.md`](./minio/README.md).
+The build containers write sstate + sources back to MinIO after each
+MACHINE (deploy artefacts stay on a shared Docker volume, not
+MinIO). Deploy the MinIO stack first — details and one-time bucket
+setup in [`minio/README.md`](./minio/README.md).
 
 TL;DR:
 
@@ -64,9 +65,20 @@ MINIO_ROOT_PASSWORD='choose-something-strong' docker compose up -d
 # then follow minio/README.md → "First-time bucket setup"
 ```
 
-You'll end up with buckets `sstate-openatv-6.0`, `sources`,
-`deploy-openatv-6.0` and a service account (`builder` + secret key)
-that the build containers use.
+You'll end up with buckets `sstate-openatv-6.0` and `sources`, plus
+a service account (`builder` + secret key) that the build containers
+use.
+
+You also need two shared Docker volumes for sources + deploy (all
+oea stacks on this host share them):
+
+```sh
+docker volume create oea_sources
+docker volume create oea_deploy
+# fix ownership so builder (uid 1000) can write:
+docker run --rm --user 0:0 -v oea_sources:/x -v oea_deploy:/y \
+    alpine chown -R 1000:1000 /x /y
+```
 
 ### 3. Pick a compose stack + deploy
 
@@ -220,14 +232,16 @@ cross-container sharing).
 ```
 mcli mirror --overwrite --newer /sstate-cache/  local/sstate-openatv-6.0/
 mcli mirror --overwrite --newer /sources/       local/sources/
-# on success only:
-mcli mirror --overwrite --newer /deploy/<M>/    local/deploy-openatv-6.0/<M>/
 ```
 
-deploy is skipped on fail because artefacts may be partial. sstate
-and sources are always synced — even a failed MACHINE has produced
-some intermediate sstate blobs and source fetches that are useful to
-the next attempt.
+sstate and sources are always synced — even a failed MACHINE has
+produced some intermediate sstate blobs and source fetches that are
+useful to the next attempt.
+
+Deploy artefacts (`.ipk` feeds, kernel, rootfs) are NOT synced to
+MinIO. They land on the shared `oea_deploy` volume on the host, and
+a separate downstream job publishes them (feed hosting, rsync, ...
+— TBD).
 
 Full bucket setup + service account creation in
 [`minio/README.md`](./minio/README.md).

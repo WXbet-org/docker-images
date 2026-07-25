@@ -110,14 +110,23 @@ networks:
     external: true
 
 volumes:
-  # Fresh per-project named volumes by default. To hook this dev stack
-  # up to an existing batch stack's leftover volumes for post-mortem,
-  # replace each entry with:
+  # oea_temp + oea_sstate: fresh per-project by default (isolation).
+  # To attach a dev stack to a specific batch stack's leftover volumes
+  # for post-mortem debug, redefine each with:
   #   oea_temp:
   #     external: true
   #     name: <batch-project>_oea_temp
-  # (and analog for the others).
   oea_temp:
   oea_sstate:
+  # oea_sources + oea_deploy: shared external volumes across all
+  # stacks on the host. Create once with:
+  #   docker volume create oea_sources
+  #   docker volume create oea_deploy
+  #   docker run --rm --user 0:0 -v oea_sources:/x -v oea_deploy:/y \
+  #       alpine chown -R 1000:1000 /x /y
   oea_sources:
+    external: true
+    name: oea_sources
   oea_deploy:
+    external: true
+    name: oea_deploy

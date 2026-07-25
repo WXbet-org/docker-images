@@ -119,10 +119,24 @@ networks:
     external: true
 
 volumes:
-  # Each compose project (via -p flag or COMPOSE_PROJECT_NAME) gets its
-  # own set of these volumes (Docker prefixes with the project name),
-  # so multiple concurrent batch stacks are naturally isolated.
+  # oea_temp + oea_sstate are per-project (Docker prefixes with the
+  # project name) -- concurrent stacks stay isolated on tmp/work
+  # (races) and sstate (bitbake write fragility). Cross-stack sstate
+  # sharing happens via the MinIO mirror instead.
   oea_temp:
   oea_sstate:
+  # oea_sources + oea_deploy are external, shared across every stack
+  # on the host. Create once with:
+  #   docker volume create oea_sources
+  #   docker volume create oea_deploy
+  #   docker run --rm --user 0:0 -v oea_sources:/x -v oea_deploy:/y \
+  #       alpine chown -R 1000:1000 /x /y
+  # sources are URL-content-addressed (safe to share, no MinIO round-
+  # trip for locally-cached tarballs). deploy has per-MACHINE subdirs
+  # so different stacks with disjoint MACHINE sets never collide.
   oea_sources:
+    external: true
+    name: oea_sources
   oea_deploy:
+    external: true
+    name: oea_deploy

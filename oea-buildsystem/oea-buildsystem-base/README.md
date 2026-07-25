@@ -121,7 +121,8 @@ On container start:
    - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
    - If MinIO write creds are set: `mcli mirror` sstate + sources
      (success or fail — the intermediate blobs are useful either
-     way). On success, also mirrors `/deploy/$M/` to MinIO.
+     way). Deploy is NOT mirrored — artefacts stay on the shared
+     `oea_deploy` volume for a downstream publishing job.
    - If bitbake exited cleanly (RC=0 or hard fail): writes `$M` to
      `/temp/.oea-last-machine` so the next cycle passes this MACHINE.
    - If bitbake exited because of a SIGTERM we forwarded to it (see
@@ -179,7 +180,7 @@ this MACHINE from the last completed task stamp.
 | `SSTATE_MIRROR_URL` | *(unset)* | Read-side sstate mirror, e.g. `http://minio:9000/sstate-openatv-6.0`. |
 | `SOURCES_MIRROR_URL` | *(unset)* | Read-side sources mirror, e.g. `http://minio:9000/sources`. |
 | `MINIO_HOST` | *(unset)* | Write-side host, e.g. `minio:9000`. Enables `mcli mirror` when set together with the two keys below. |
-| `MINIO_ACCESS_KEY` | *(unset)* | Service-account access key with `readwrite` on the sstate / sources / deploy buckets. |
+| `MINIO_ACCESS_KEY` | *(unset)* | Service-account access key with `readwrite` on the sstate + sources buckets. |
 | `MINIO_SECRET_KEY` | *(unset)* | Corresponding secret key. |
 
 ## Volumes
@@ -189,7 +190,7 @@ this MACHINE from the last completed task stamp.
 | `/temp` | TMPDIR — per-MACHINE subdirs (`/temp/$M/work`, `/temp/$M/sysroots-*`, `/temp/$M/stamps`). Persistent so a killed container's build state survives for debug. | 50-200 GB across all MACHINEs |
 | `/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mcli mirror` after each MACHINE. | 5-50 GB |
 | `/sources` | DL_DIR — upstream source tarballs, shared across MACHINEs. Same read/write flow as sstate. | 2-20 GB |
-| `/deploy` | Deploy artefacts (kernel, rootfs, `.deb` feeds) per-MACHINE subdir (`/deploy/$M/`). Mirrored to MinIO on successful build. | 1-10 GB per MACHINE |
+| `/deploy` | Deploy artefacts (kernel, rootfs, `.ipk` feeds) per-MACHINE subdir (`/deploy/$M/`). Shared external volume `oea_deploy` on the host; published downstream (feed hosting, rsync) by a separate job. Not synced to MinIO. | 1-10 GB per MACHINE |
 
 ## When to rebuild this image
 
