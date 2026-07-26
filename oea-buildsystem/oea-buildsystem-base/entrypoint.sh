@@ -162,27 +162,26 @@ done
 echo ">>> make update"
 make update
 
-# --- 4b. Prime the build tree via `make init` --------------------------
-# `make init` (target: setupmbuild + BBLAYERS + CONFFILES) writes
-# workspace/site.conf and the per-MACHINE conf/{local.conf,bblayers.conf,
-# env.source} for the given MACHINE. Needed once so bitbake has DL_DIR,
-# SSTATE_DIR etc. before Section 5 appends the mirror URLs. Uses first
-# MACHINE from $MACHINES -- the site.conf itself is machine-agnostic.
-FIRST_MACHINE="${MACHINES%% *}"
-echo ">>> make MACHINE=$FIRST_MACHINE init"
-make MACHINE="$FIRST_MACHINE" init
+# 4b: workspace/site.conf idempotent + backdated
 SITE_CONF="/home/builder/workspace/site.conf"
+[ -f "$SITE_CONF" ] || make "$SITE_CONF"
+
+# Kill stale per-MACHINE symlinks (defense)
+rm -f "$BUILDS_ROOT"/*/conf/site.conf
 
 # --- 5. Append mirror URLs to workspace/site.conf ---------------------
+# Idempotent: skip if already there. Backdate mtime after append so
+# the per-MACHINE conf/site.conf symlinks stay newer (see 4b).
 if [ -n "${SSTATE_MIRROR_URL:-}" ] || [ -n "${SOURCES_MIRROR_URL:-}" ]; then
-    {
-        echo ""
-        echo "# --- oea-buildsystem: mirror URLs (appended by entrypoint) ---"
-        if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
-            echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\""
-        fi
-        if [ -n "${SOURCES_MIRROR_URL:-}" ]; then
-            cat <<EOF
+    if ! grep -q "oea-buildsystem: mirror URLs" "$SITE_CONF" 2>/dev/null; then
+        {
+            echo ""
+            echo "# --- oea-buildsystem: mirror URLs (appended by entrypoint) ---"
+            if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
+                echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\""
+            fi
+            if [ -n "${SOURCES_MIRROR_URL:-}" ]; then
+                cat <<EOF
 PREMIRRORS ?= "\\
     bzr://.*/.*      ${SOURCES_MIRROR_URL}/ \\n \\
     cvs://.*/.*      ${SOURCES_MIRROR_URL}/ \\n \\
@@ -196,9 +195,10 @@ PREMIRRORS ?= "\\
     http://.*/.*     ${SOURCES_MIRROR_URL}/ \\n \\
     https://.*/.*    ${SOURCES_MIRROR_URL}/ \\n"
 EOF
-        fi
-    } >> "$SITE_CONF"
-    echo ">>> mirror config appended to $SITE_CONF"
+            fi
+        } >> "$SITE_CONF"
+        echo ">>> mirror config appended to $SITE_CONF"
+    fi
 fi
 
 # --- 6. sshd -----------------------------------------------------------
@@ -373,12 +373,16 @@ build_machine() {
         ln -s "/home/builder/deploy/$M" "$BUILD_DIR/tmp/deploy"
     fi
 
-    # Pass the MACHINEBUILD as MACHINE= to make -- the Makefile does its
-    # own resolution and expects the user-typed name. Run in a new
-    # session (setsid) so the process tree is isolated; the SIGTERM
+    # Pre-clean the site.conf symlink -- Makefile's recipe uses `ln -s`
+    # (no -f) and fails on stale symlinks from previous builds.
+    rm -f "$BUILD_DIR/conf/site.conf"
+
+    # Pass the MACHINEBUILD as MACHINE= env-var to make -- the Makefile
+    # does its own resolution and expects the user-typed name. Run in a
+    # new session (setsid) so the process tree is isolated; the SIGTERM
     # handler still signals bitbake by name, not by PGID.
     set +e
-    setsid make MACHINE="$MB" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" "$ACTION" &
+    setsid env MACHINE="$MB" DISTRO="$DISTRO" DISTRO_TYPE="$DISTRO_TYPE" make "$ACTION" &
     MAKE_PID=$!
     wait "$MAKE_PID"
     local RC=$?
