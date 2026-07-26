@@ -354,6 +354,13 @@ build_machine() {
         echo "  START  MACHINE=$MB  [-> builds/.../$M]  ($LABEL)"
     fi
     echo "================================================================="
+    # Pull latest recipes before every MACHINE so a long-running loop
+    # picks up upstream commits without needing a container restart.
+    # `make update` is a git-fetch on the submodule tree -- near-noop
+    # when nothing new upstream, seconds when there are changes.
+    echo ">>> make update"
+    make update || echo "!!! make update failed, continuing with existing tree"
+
     local BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
     # tmp/ is a real directory inside the volume-mounted BUILDS_ROOT --
     # NOT a symlink (see header notes on the libtool inline-source bug).
