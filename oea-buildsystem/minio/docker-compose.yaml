@@ -46,6 +46,43 @@ services:
       retries: 3
       start_period: 20s
 
+  # bitbake-hashserv: cross-stack hash equivalence server. Build stacks
+  # point BB_HASHSERVE at hashserv:8686 -- recipe input/output hash
+  # mappings get registered centrally, so sstate-mirror lookups match
+  # across stacks even when local metadata differs slightly. Without it
+  # the SSTATE_MIRRORS in MinIO would rarely hit.
+  #
+  # Slim alpine + bitbake source cloned once into a persistent volume.
+  # ~80 MB total footprint, ~5s restart after first bootstrap.
+  hashserv:
+    image: alpine:3
+    container_name: hashserv
+    hostname: hashserv
+    networks:
+      - oea-build
+    ports:
+      - "8686:8686"
+    volumes:
+      - hashserv-data:/data           # sqlite DB, backup-relevant
+      - hashserv-bitbake:/opt/bitbake # bitbake source, cached
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache python3 sqlite git >/dev/null
+        if [ ! -d /opt/bitbake/.git ]; then
+          git clone --depth 1 -b ${BITBAKE_BRANCH:-master} https://git.openembedded.org/bitbake /opt/bitbake
+        fi
+        exec python3 /opt/bitbake/bin/bitbake-hashserv --bind 0.0.0.0:8686 --database /data/hashserv.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost',8686)); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s   # first boot: apk add + git clone
+
 networks:
   # Shared bridge network. Build containers must join it to reach
   # http://minio:9000. `external: true` avoids docker deleting the
@@ -62,3 +99,10 @@ volumes:
   # BACK THIS UP -- losing it means losing the whole sstate mirror
   # and every source tarball you seeded.
   data:
+  # bitbake-hashserv sqlite DB. Losing it wipes all cross-stack hash
+  # equivalences -- rebuild loop will re-populate but early sstate
+  # mirror hit rate drops until it does. Back up periodically.
+  hashserv-data:
+  # bitbake source, cloned once from https://git.openembedded.org/bitbake
+  # on first container start. Cached so restart takes seconds.
+  hashserv-bitbake:

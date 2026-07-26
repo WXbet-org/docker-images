@@ -172,11 +172,16 @@ rm -f "$BUILDS_ROOT"/*/conf/site.conf
 # --- 5. Append mirror URLs to workspace/site.conf ---------------------
 # Idempotent: skip if already there. Backdate mtime after append so
 # the per-MACHINE conf/site.conf symlinks stay newer (see 4b).
-if [ -n "${SSTATE_MIRROR_URL:-}" ] || [ -n "${SOURCES_MIRROR_URL:-}" ]; then
+if [ -n "${SSTATE_MIRROR_URL:-}" ] || [ -n "${SOURCES_MIRROR_URL:-}" ] || [ -n "${BB_HASHSERVE_URL:-}" ]; then
     if ! grep -q "oea-buildsystem: mirror URLs" "$SITE_CONF" 2>/dev/null; then
         {
             echo ""
             echo "# --- oea-buildsystem: mirror URLs (appended by entrypoint) ---"
+            if [ -n "${BB_HASHSERVE_URL:-}" ]; then
+                # Point at the central hash equivalence server -- so
+                # sstate-mirror hashes match cross-stack.
+                echo "BB_HASHSERVE = \"${BB_HASHSERVE_URL}\""
+            fi
             if [ -n "${SSTATE_MIRROR_URL:-}" ]; then
                 echo "SSTATE_MIRRORS ?= \"file://.* ${SSTATE_MIRROR_URL}/PATH\""
             fi
