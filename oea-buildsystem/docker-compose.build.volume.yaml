@@ -115,6 +115,7 @@ services:
     #   fs.inotify.max_user_watches=524288
     security_opt:
       - apparmor=unconfined
+      - seccomp=unconfined
 
     ulimits:
       nofile:
