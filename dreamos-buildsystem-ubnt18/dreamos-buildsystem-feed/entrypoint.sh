@@ -144,6 +144,16 @@ setup_symlinks() {
 setup_symlinks
 log "initial scan complete"
 
+# Caddy's {$VAR:default} placeholder falls back to the default only
+# when the env-var is UNSET -- an EMPTY string is treated as a valid
+# value. docker-compose always exports declared env-vars, so a
+# `FEED_DOMAIN: "${FEED_DOMAIN:-}"` from an unset stack env passes an
+# empty string through, which would collapse `{$FEED_DOMAIN::80}` to
+# an empty site address ("server block without any key is global
+# configuration"). Unset empties so the Caddyfile defaults fire.
+[ -z "${FEED_DOMAIN:-}" ] && unset FEED_DOMAIN
+[ -z "${FEED_ACME_EMAIL:-}" ] && unset FEED_ACME_EMAIL
+
 # --- background rescan loop, catches newly finished builds ---
 (
     while sleep "$RESCAN_INTERVAL"; do
