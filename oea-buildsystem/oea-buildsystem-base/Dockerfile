@@ -96,6 +96,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
         iputils-ping \
         java-common \
         jq \
+        kmod \
         lib32z1 \
         libacl1-dev \
         libc6-dev \
