@@ -17,7 +17,7 @@
 #
 # Access:
 #   ssh -p 2222 builder@localhost          # login as builder / builder
-#   docker compose -f docker-compose.volume.yaml exec dreamos-buildsystem bash
+#   docker compose -f docker-compose.volume.yaml exec dreamos-buildsystem-dev bash
 #
 # Environment overrides (via .env, shell, or the deploying tool's env):
 #   TAG=v0.4.0          # pin a specific image tag (default: latest)
@@ -41,10 +41,10 @@
 #       alpine tar czf /backup/dreamos-builds-backup.tgz -C /data .
 
 services:
-  dreamos-buildsystem:
+  dreamos-buildsystem-dev:
     image: ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:${TAG:-latest}
-    container_name: dreamos-buildsystem
-    hostname: dreamos-buildsystem
+    container_name: dreamos-buildsystem-dev
+    hostname: dreamos-buildsystem-dev
 
     ports:
       # sshd is started by the entrypoint; port 22 inside -> host SSH_PORT

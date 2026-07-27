@@ -88,7 +88,7 @@ ship in this directory:
 ```sh
 docker compose -f docker-compose.volume.yaml up -d
 ssh -p 2222 builder@localhost                   # password: builder
-docker compose -f docker-compose.volume.yaml exec dreamos-buildsystem bash
+docker compose -f docker-compose.volume.yaml exec dreamos-buildsystem-dev bash
 ```
 
 Both `restart: unless-stopped`. First start runs the auto-bootstrap
@@ -129,8 +129,9 @@ docker compose -f docker-compose.build.volume.yaml up -d
 docker compose -f docker-compose.build.volume.yaml logs -f
 ```
 
-Container name for the batch variant is `dreamos-build-auto` (fixed);
-long-running is `dreamos-buildsystem`. Both use the SAME
+Container names are fixed: batch variant is `dreamos-buildsystem-auto`,
+long-running is `dreamos-buildsystem-dev`, feed server is
+`dreamos-buildsystem-feed`. All build variants use the SAME
 `dreamos_build_data` volume for warm-cache sharing.
 
 #### First-start auto-bootstrap
