@@ -84,7 +84,7 @@ already there, and `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` env-vars
 are visible so you don't have to type the password):
 
 ```sh
-docker exec -it minio sh          # or Komodo -> Container -> Console
+docker exec -it minio sh          # or your web UI's container console
 # then, once inside:
 export MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000"
 mc admin info local                # sanity check -- should show server status
@@ -126,9 +126,9 @@ mc anonymous set download local/sources
 # (min. 8 chars). Pick something long + random -- generated below
 # from /dev/urandom (portable across busybox / alpine / ubuntu, no
 # openssl needed since the minio container ships without it). Save
-# the printed value somewhere durable (password manager, Komodo
-# stack secrets, ...) because MinIO won't show it again after this
-# command runs.
+# the printed value somewhere durable (password manager, your
+# orchestrator's stack secrets, ...) because MinIO won't show it
+# again after this command runs.
 BUILDER_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '\n/+' | head -c 32)
 echo "SAVE THIS: MINIO_SECRET_KEY for the oea build stacks = $BUILDER_SECRET"
 
@@ -136,7 +136,8 @@ mc admin user add local builder "$BUILDER_SECRET"
 mc admin policy attach local readwrite --user builder
 ```
 
-Later, in each oea build stack's Komodo/compose env:
+Later, in each oea build stack's env (`.env`, shell, or your
+orchestrator's stack env):
 ```
 MINIO_ACCESS_KEY=builder
 MINIO_SECRET_KEY=<the value you saved above>

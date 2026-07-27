@@ -74,8 +74,8 @@ docker stop dreamos-builder && docker rm dreamos-builder
 #### 2c. Long-running compose stack
 
 For service-style deployment (survives host reboots, redeploy from
-Git via Portainer/Komodo), two ready-made compose files ship in this
-directory:
+Git via your orchestrator's web UI), two ready-made compose files
+ship in this directory:
 
 - [`docker-compose.mount.yaml`](docker-compose.mount.yaml) — bind-mounts
   host `$HOME/dreamos-builds` (or `BUILDS_DIR`) to `/home/builder`.

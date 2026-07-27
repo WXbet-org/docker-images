@@ -134,8 +134,8 @@ docker compose -p oea-a exec oea-build bash        # via docker
 ssh -p 2222 builder@<host>                         # via ssh (password: builder)
 ```
 
-Komodo / Portainer provide a web-terminal button that does the exec
-for you.
+Your orchestrator's web UI probably has a container-terminal button
+that does the exec for you.
 
 ### Retry a failed MACHINE
 

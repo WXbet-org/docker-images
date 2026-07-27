@@ -26,7 +26,7 @@
 #   MACHINES="dm900 dm920" docker compose -p oea-batch-a -f docker-compose.build.volume.yaml up -d
 #   docker compose -p oea-batch-a -f docker-compose.build.volume.yaml logs -f
 #
-# Environment overrides (via .env, shell, or Komodo stack env):
+# Environment overrides (via .env, shell, or your orchestrator's stack env):
 #
 #   Required:
 #     MACHINES="dm900 dm920 ..."      space-separated list of MACHINEs

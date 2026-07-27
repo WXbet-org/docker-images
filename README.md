@@ -17,7 +17,7 @@ matches what you want to build and follow its README:
 The rest of this README covers the one-time Docker host setup that
 applies regardless of which build system you run. All three
 sub-projects assume a working Docker Engine + Compose plugin, and
-Portainer/Komodo works with any of them if you want a web UI.
+Portainer/Komodo (or any Docker web UI) works with any of them.
 
 ### 1. Install Docker
 
@@ -69,11 +69,12 @@ Each container is now capped at 5 × 50 MB = 250 MB of history, older
 lines rotate out. Applies to every container going forward. Existing
 containers need a `docker restart <name>` to pick up the new driver.
 
-### 1b. Optional: Portainer or Komodo for a web UI
+### 1b. Optional: A web UI
 
-Either works. Both let you deploy compose stacks straight from this Git repo.
+Any Docker web UI works with these stacks -- they're stock compose
+files, no orchestrator-specific setup. Two known-good examples:
 
-**Portainer** — single container, HTTPS UI:
+**Portainer** — single container, HTTPS UI, single-host:
 
 ```sh
 docker volume create portainer_data
@@ -99,10 +100,64 @@ creation. Local access from the same host doesn't need the token.
 Port `9443` = UI, `8000` = Edge-Agent (skip if you only manage this
 host locally).
 
-**Komodo** — multi-host orchestrator, meant for a small farm.
-Deployed once on a coordinator VM plus a `komodo-periphery` container
-on each build host. Deploys stacks from Git repos, tails their logs,
-provides SSH-into-container terminals. See Komodo's own docs for setup.
+**Komodo** — Git-driven stack orchestrator. Deploys compose stacks
+straight from this repo, tails their logs, provides SSH-into-container
+terminals. The upstream `ferretdb.compose.yaml` bundles the Core
+service plus a local Periphery agent, so a single-host install is
+still a one-shot deploy:
+
+```sh
+mkdir -p ~/komodo && cd ~/komodo
+curl -fsSL \
+    https://raw.githubusercontent.com/moghtech/komodo/main/compose/compose.env \
+    -o .env
+curl -fsSL \
+    https://raw.githubusercontent.com/moghtech/komodo/main/compose/ferretdb.compose.yaml \
+    -o compose.yaml
+# Edit .env before starting -- at minimum change the four secrets:
+#   KOMODO_INIT_ADMIN_PASSWORD  (default: "changeme")
+#   KOMODO_WEBHOOK_SECRET       (default: "a_random_secret")
+#   KOMODO_JWT_SECRET           (default: "a_random_jwt_secret")
+#   KOMODO_HOST                 (used for OAuth redirects + webhook URLs;
+#                                for local-only use http://<host>:9120)
+docker compose up -d
+```
+
+Then browse to `http://<host>:9120`, log in as
+`admin` / `<the password you set>`, and deploy compose stacks
+from this Git repo (`Stacks → New Stack → Git Repo`).
+
+The bundled Periphery auto-connects to Core over the local
+`keys` volume, so this one host is already registered as the
+`Local` server.
+
+**Adding more build hosts to the same Komodo Core.** On the Core
+UI, first mint an onboarding key at `Settings → Onboarding Keys →
+Create Key` and copy the value. Then on each additional Docker host
+you want Core to manage:
+
+```sh
+mkdir -p ~/komodo && cd ~/komodo
+curl -fsSL \
+    https://raw.githubusercontent.com/moghtech/komodo/main/compose/periphery.compose.yaml \
+    -o compose.yaml
+# Edit compose.yaml -- change these three under `environment:`:
+#   PERIPHERY_CORE_ADDRESS      -> ws://<core-host>:9120
+#                                  (wss:// if Core is behind TLS)
+#   PERIPHERY_CONNECT_AS        -> a unique server name of your choice
+#                                  (e.g. build-2, farm-node-nyc)
+#   PERIPHERY_ONBOARDING_KEY    -> the key you just minted in the UI
+docker compose up -d
+```
+
+The new host registers itself under `PERIPHERY_CONNECT_AS` the first
+time it connects; you'll see it appear on the `Servers` page. Delete
+the onboarding key afterwards -- Core keeps the public-key trust
+across restarts and doesn't need the onboarding key again. See
+Komodo's own docs for the full option matrix (custom root CA, TLS,
+periphery config file overrides, ...).
+
+Either works. Pick whatever fits your workflow.
 
 ## Repo layout
 
