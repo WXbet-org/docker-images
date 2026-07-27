@@ -12,24 +12,21 @@
 #   │   └── krogoth/
 #   │       └── <channel>/                ← from local-ext.conf
 #   │           └── dm900/                ← REAL directory
-#   │               ├── all/       → <build>/.../deploy/deb/all
-#   │               ├── dm900/     → <build>/.../deploy/deb/dm900
-#   │               ├── <tune>/    → <build>/.../deploy/deb/<tune>
-#   │               ├── Packages.gz -> <build>/.../deploy/deb/Packages.gz
-#   │               ├── Release     -> <build>/.../deploy/deb/Release
-#   │               ├── ...          (any other file / dir under deb/)
-#   │               └── images/    → <build>/.../deploy/images/dm900
+#   │               ├── deb/    → <build>/.../deploy/deb
+#   │               └── images/ → <build>/.../deploy/images/dm900
 #   └── dreamlegacy/...
 #
-# The URL the box hits is <HOST>/<fork>/<branch>/<channel>/<machine>/<arch>/...
-# which maps to /srv/feed/<fork>/<branch>/<channel>/<machine>/<arch>/... which
-# is the symlink pointing into <deploy>/deb/<arch>/... -- no rewrite,
-# and the URL doesn't include /deb (opkg reads the .deb repo directly
-# from the machine-level URL).
+# The URL the box hits is <HOST>/<fork>/<branch>/<channel>/<machine>/deb/<arch>/...
+# which maps to /srv/feed/<fork>/<branch>/<channel>/<machine>/deb/<arch>/... --
+# the `deb` symlink follows straight into <deploy>/deb, no rewrite.
+# openembedded-core's distro-feed-configs recipe writes exactly that
+# URL shape (<DISTRO_FEED_URI>/deb/<arch>) into /etc/apt/sources.list.d/,
+# so bootstrap-buildenv on the build side sets DISTRO_FEED_URI to the
+# machine-level URL and the recipe handles the `/deb/` suffix.
 #
-# Images live under a sibling `images` symlink, so
-# <HOST>/<fork>/<branch>/<channel>/<machine>/images/<file> serves the
-# firmware image without leaking a /deb/ segment.
+# Firmware images live under a sibling `images` symlink, so
+# <HOST>/<fork>/<branch>/<channel>/<machine>/images/<file> serves them
+# without leaking into the deb repo.
 #
 # The scan runs once at container start (so the first HTTP request
 # sees a populated tree), then loops every RESCAN_INTERVAL seconds in
@@ -60,12 +57,21 @@ read_channel() {
     fi
 }
 
-# Fan out the contents of <deploy>/deb into <feed>/<...>/<machine>/ as
-# individual symlinks (all/, <machine>/, per-tune dirs, Packages.gz,
-# Release, InRelease, Release.gpg, ...), and if <deploy>/images/<machine>
-# exists, add a sibling `images` symlink to it. Idempotent -- existing
-# symlinks are refreshed only if the target moved; new entries in the
-# deploy dir picked up on the next rescan.
+# Materialise <feed>/<...>/<machine>/ as a real directory with two
+# symlinks inside:
+#
+#   .../<machine>/deb    -> <deploy>/deb           (whole deb tree)
+#   .../<machine>/images -> <deploy>/images/<MACHINE>  (per-machine images)
+#
+# The distro-feed-configs recipe on the build side writes opkg/apt
+# feed URLs of the shape <URL>/deb/<arch>, so `<machine>/deb` matches
+# what the box requests and gives it the whole per-arch tree in one
+# symlink resolve. Images live under a sibling `images` symlink so
+# they share the machine URL without leaking into the deb repo.
+#
+# Idempotent -- symlinks are refreshed only if their target moved;
+# new files inside a linked deploy dir appear immediately since the
+# symlink points at the parent, not a snapshot.
 link_machine() {
     local deploy_dir="$1"
     local link_dir="$2"
@@ -73,21 +79,20 @@ link_machine() {
 
     mkdir -p "$link_dir"
 
-    # deb feed: symlink each direct child of deploy/deb into <link_dir>.
-    # Empty deploy dir is OK -- rescans will catch new entries.
+    # deb repo -- single symlink covering all archs (all/, <machine>/,
+    # <tune>/, Packages.gz, Release, ...). Absence is fine -- rescans
+    # will pick it up as soon as the first successful package task
+    # writes to the dir.
     if [ -d "$deploy_dir/deb" ]; then
-        for entry in "$deploy_dir/deb"/*; do
-            [ -e "$entry" ] || continue
-            local name
-            name=$(basename "$entry")
-            local link="$link_dir/$name"
-            if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$entry" ]; then
-                ln -sfn "$entry" "$link"
-            fi
-        done
+        local link="$link_dir/deb"
+        local target="$deploy_dir/deb"
+        if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$target" ]; then
+            ln -sfn "$target" "$link"
+        fi
     fi
 
-    # images/<MACHINE> gets its own sibling symlink named `images`.
+    # Firmware images -- <deploy>/images/<MACHINE>. Same idempotent
+    # refresh as `deb`.
     if [ -d "$deploy_dir/images/$machine" ]; then
         local link="$link_dir/images"
         local target="$deploy_dir/images/$machine"

@@ -40,22 +40,20 @@ Everything under `/srv/feed` after the symlink pass. Concretely:
 │   └── krogoth/
 │       └── unstable/                        ← DISTRO_FEED_CHANNEL
 │           └── dm900/                       ← REAL directory
-│               ├── all/     →  <build>/.../deploy/deb/all
-│               ├── dm900/   →  <build>/.../deploy/deb/dm900
-│               ├── <tune>/  →  <build>/.../deploy/deb/<tune>
-│               ├── Packages.gz -> <build>/.../deploy/deb/Packages.gz
-│               ├── Release     -> <build>/.../deploy/deb/Release
-│               ├── ...           (each direct child of deb/)
-│               └── images/  →  <build>/.../deploy/images/dm900
+│               ├── deb/    →  <build>/.../deploy/deb
+│               └── images/ →  <build>/.../deploy/images/dm900
 └── dreamlegacy/
     └── pyro/
         └── ...
 ```
 
-The per-MACHINE dir is a real directory populated with a symlink for
-each direct child of `<deploy>/deb` (so opkg can hit each arch under
-the machine URL directly, no `/deb` in the URL) plus a sibling
-`images` symlink to the firmware images dir.
+The per-MACHINE dir is a real directory with two symlinks: `deb`
+covers the whole deb repository (so URL `.../<machine>/deb/<arch>`
+resolves straight into the arch feed) and `images` exposes the
+firmware artefacts. openembedded-core's `distro-feed-configs`
+recipe writes URLs of the shape `<DISTRO_FEED_URI>/deb/<arch>` into
+the box's opkg / apt config, so `bootstrap-buildenv` sets
+`DISTRO_FEED_URI` to the machine-level URL and this layout matches.
 
 The channel path segment comes from each branch's `local-ext.conf`
 (`DISTRO_FEED_CHANNEL`) -- default `unstable`, override per stack by
