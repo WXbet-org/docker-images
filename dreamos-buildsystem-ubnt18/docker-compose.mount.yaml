@@ -59,7 +59,7 @@ services:
       # Feed host baked into the built image's opkg config.
       #   Unset -> upstream default (mirrors dreamboxupdate.com exactly):
       #     https://dreamboxupdate.com/opendreambox/<VERSION>/<CHANNEL>/<PR>/<MACHINE>
-      #   Set   -> self-hosted (matches dreamos-feed's symlink layout):
+      #   Set   -> self-hosted (matches dreamos-buildsystem-feed's symlink layout):
       #     <IMAGE_FEED_URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
       IMAGE_FEED_URL: "${IMAGE_FEED_URL:-}"
       # Forward terminal capabilities so the MOTD renders in 256/truecolor

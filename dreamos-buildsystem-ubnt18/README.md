@@ -312,8 +312,8 @@ echo "$FPR:6:" | gpg --import-ownertrust
 **Export the public key** (for STB / test client):
 
 ```sh
-gpg --armor --export builder@dreamos-buildsystem.local > dreamos-feed-pubkey.asc
-# On the STB: apt-key add dreamos-feed-pubkey.asc
+gpg --armor --export builder@dreamos-buildsystem.local > dreamos-buildsystem-feed-pubkey.asc
+# On the STB: apt-key add dreamos-buildsystem-feed-pubkey.asc
 ```
 
 **Rotate / remove**:

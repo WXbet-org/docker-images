@@ -1,5 +1,5 @@
 #!/bin/sh
-# dreamos-feed entrypoint.
+# dreamos-buildsystem-feed entrypoint.
 #
 # Scans the read-only build tree at /home/builder for finished builds
 # and materializes a clean symlink tree under /srv/feed (which is where
@@ -44,7 +44,7 @@ RESCAN_INTERVAL="${RESCAN_INTERVAL:-60}"
 DEFAULT_CHANNEL="${DEFAULT_CHANNEL:-unstable}"
 
 log() {
-    printf '>>> dreamos-feed: %s\n' "$*" >&2
+    printf '>>> dreamos-buildsystem-feed: %s\n' "$*" >&2
 }
 
 # Read DISTRO_FEED_CHANNEL from a branch's local-ext.conf. Fall back to

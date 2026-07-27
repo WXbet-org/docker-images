@@ -1,27 +1,31 @@
-# dreamos-feed -- serves the .deb package repository produced by the
-# dreamos-buildsystem batch/dev stacks. This variant attaches to the
-# same Docker-managed named volume that the build stacks use, so the
-# feed always mirrors the live build output (read-only).
+# dreamos-buildsystem-feed -- serves the .deb package repository produced by the
+# dreamos-buildsystem batch/dev stacks. This variant bind-mounts a
+# host path instead of using the build stack's Docker-managed volume.
+# Use it when the dreamos-buildsystem stack itself is running in
+# bind-mount mode (docker-compose.mount.yaml / .build.mount.yaml) so
+# the feed sees the same tree the build writes to.
 #
-# For a host bind-mount instead of a named volume (browse the served
-# tree straight from the host filesystem), use docker-compose.mount.yaml.
-#
-# The volume needs to have been created by a dreamos-buildsystem
-# compose deploy already (its default name is <project>_dreamos_build_data
-# under the build stack's compose project). Point at it via the
-# BUILD_VOLUME env-var (see below).
+# WARNING -- UID matters ONLY IF the mounted path isn't world-readable.
+# The Caddy container runs as `caddy` (uid 1000), and the tree is
+# mounted :ro so it doesn't need write access. If your build tree is
+# not readable by uid 1000 (e.g. owned by root:root with 0700), Caddy
+# will hit `permission denied` on every request. Either loosen perms
+# on the source directory or align ownership:
+#     sudo chown -R 1000:1000 <host-path>
 #
 # Usage:
-#   BUILD_VOLUME=<build-project>_dreamos_build_data \
-#       docker compose -f docker-compose.volume.yaml up -d
+#   BUILDS_DIR=/home/wxbet/dreamos-builds \
+#       docker compose -f docker-compose.mount.yaml up -d
 #
 # Environment overrides:
 #
-#   Required (unless the default matches your build stack):
-#     BUILD_VOLUME=<build-project>_dreamos_build_data
-#                              Docker-managed volume name shared with
-#                              the running dreamos-buildsystem stack.
-#                              Default: dreamos-builder_ci_dreamos_build_data
+#   Required (points at the same tree the build stack writes to):
+#     BUILDS_DIR=/home/wxbet/dreamos-builds
+#                              Host path that maps to /home/builder
+#                              inside the running dreamos-buildsystem
+#                              stack (see its docker-compose.mount.yaml
+#                              BUILDS_DIR / HOME defaults).
+#                              Default: ${HOME}/dreamos-builds
 #
 #   HTTP / HTTPS mode:
 #     FEED_DOMAIN=feed.example.com
@@ -44,18 +48,12 @@
 #
 #   Container:
 #     TAG=2                    caddy image tag (default: 2)
-#
-# Caddy needs port 80 reachable from the internet for the LE HTTP-01
-# challenge. If you're not exposing 80:80 (e.g. because something else
-# on the host holds it), either front dreamos-feed with a proxy that
-# forwards ACME challenges, or switch to DNS-01 by extending this
-# compose with a Caddy build that includes your DNS provider plugin.
 
 services:
   feed:
     image: caddy:${TAG:-2}
-    container_name: dreamos-feed
-    hostname: dreamos-feed
+    container_name: dreamos-buildsystem-feed
+    hostname: dreamos-buildsystem-feed
 
     ports:
       - "${FEED_HTTP_PORT:-8080}:80"
@@ -82,12 +80,10 @@ services:
     volumes:
       - "./Caddyfile:/etc/caddy/Caddyfile:ro"
       - "./entrypoint.sh:/entrypoint.sh:ro"
-      # The build stack's data volume mounted read-only, at the SAME
-      # path the build container uses (/home/builder) so the symlinks
-      # entrypoint.sh writes to point at valid on-container paths.
-      # A compromised or misbehaving feed can never mutate build state
-      # because of the :ro flag.
-      - "build_data:/home/builder:ro"
+      # Bind-mount the host's build tree read-only, at the SAME path
+      # the build container uses (/home/builder) so the symlinks
+      # entrypoint.sh writes point at valid on-container paths.
+      - "${BUILDS_DIR:-${HOME}/dreamos-builds}:/home/builder:ro"
       # LE certs + Caddy state persist across container restarts.
       - "caddy_data:/data"
       - "caddy_config:/config"
@@ -100,12 +96,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  # External (shared with the running dreamos-buildsystem stack).
-  # Override the default here if your build stack uses a different
-  # compose project name (`-p` on `docker compose up`).
-  build_data:
-    external: true
-    name: "${BUILD_VOLUME:-dreamos-builder_ci_dreamos_build_data}"
-  # Managed per feed stack -- certs + Caddy state.
   caddy_data:
   caddy_config:

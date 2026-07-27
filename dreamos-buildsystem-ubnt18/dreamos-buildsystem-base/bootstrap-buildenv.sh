@@ -160,11 +160,11 @@ OSCAMPORT = "8888"
 #         DISTRO_VERSION : 2.5 (krogoth) / 2.6 (pyro)
 #         PR             : bitbake's per-recipe PACKAGE_REVISION
 #
-#   IMAGE_FEED_URL SET  -> self-hosted (matches dreamos-feed layout):
+#   IMAGE_FEED_URL SET  -> self-hosted (matches dreamos-buildsystem-feed layout):
 #     <IMAGE_FEED_URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
 #         fork    : opendreambox | dreamlegacy
 #         branch  : krogoth | pyro | ...
-#     dreamos-feed fans deploy/deb's subdirs directly into the
+#     dreamos-buildsystem-feed fans deploy/deb's subdirs directly into the
 #     per-MACHINE feed dir as symlinks, and adds a sibling `images`
 #     symlink for firmware images -- so URL <machine>/all/foo.deb
 #     resolves straight to <deploy>/deb/all/foo.deb, and
@@ -254,12 +254,12 @@ LOCALEXT
     # expands MACHINE / DISTRO_FEED_CHANNEL / PR at recipe time.
     if [ -n "${IMAGE_FEED_URL:-}" ]; then
         # Self-hosted: <URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
-        # No trailing /deb -- dreamos-feed fans the deploy/deb/ subdirs
+        # No trailing /deb -- dreamos-buildsystem-feed fans the deploy/deb/ subdirs
         # out as individual symlinks directly inside the per-MACHINE
         # feed dir, so opkg reads .deb feeds at the machine URL
         # directly (URL <machine>/all/... -> on-disk .../deb/all/...).
         # Firmware images live at a sibling `images` symlink under the
-        # same machine URL. See dreamos-feed/entrypoint.sh for the
+        # same machine URL. See dreamos-buildsystem-feed/entrypoint.sh for the
         # exact symlink layout.
         # Strip trailing / from the user's URL so we don't emit `//`.
         feed_uri="${IMAGE_FEED_URL%/}/${fork}/${branch}/\${DISTRO_FEED_CHANNEL}/\${MACHINE}"

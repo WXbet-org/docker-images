@@ -1,7 +1,7 @@
-# dreamos-feed
+# dreamos-buildsystem-feed
 
 Tiny Caddy-based HTTP(S) server that publishes the .deb feed produced
-by [`dreamos-buildsystem-ubnt18`](../dreamos-buildsystem-ubnt18/) so
+by [`dreamos-buildsystem-ubnt18`](../) so
 opkg on the target box can install packages from it.
 
 ## Design in one paragraph
@@ -110,8 +110,8 @@ docker compose -f docker-compose.mount.yaml up -d
 
 The URL baked into an image's `/etc/opkg/*.conf` at build time is
 controlled by the `IMAGE_FEED_URL` env-var on the build stack (see
-[`dreamos-buildsystem-ubnt18/README`](../dreamos-buildsystem-ubnt18/README.md)).
-Point it at whatever URL your `dreamos-feed` is reachable on:
+[`dreamos-buildsystem-ubnt18/README`](../README.md)).
+Point it at whatever URL your `dreamos-buildsystem-feed` is reachable on:
 
 ```
 IMAGE_FEED_URL=https://feed.example.com   # baked URL:
@@ -120,7 +120,7 @@ IMAGE_FEED_URL=https://feed.example.com   # baked URL:
 
 `bootstrap-buildenv` on the build side appends the fork, branch, the
 channel from `DISTRO_FEED_CHANNEL`, and the MACHINE -- nothing else.
-That matches what dreamos-feed's symlink tree exposes here (the deb
+That matches what dreamos-buildsystem-feed's symlink tree exposes here (the deb
 subdirs are lifted directly into the machine dir, with a sibling
 `images` symlink for firmware), so opkg on the box hits the .deb
 repo directly with no rewriting in between.

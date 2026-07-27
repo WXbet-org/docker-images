@@ -1,4 +1,4 @@
-# dreamos-feed Caddyfile
+# dreamos-buildsystem-feed Caddyfile
 #
 # Serves a clean symlink tree that /entrypoint.sh built under /srv/feed
 # from the read-only build volume mounted at /home/builder. The URL
