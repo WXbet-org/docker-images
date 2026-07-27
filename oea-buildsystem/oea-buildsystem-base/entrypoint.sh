@@ -226,12 +226,17 @@ fi
 
 # --- 7. mcli (MinIO client) setup: only if all three write creds given ---
 # Binary is installed as `mcli` (not `mc`) to avoid clashing with the
-# Midnight Commander apt package. MinIO derives its env-var prefix
-# from the invoked binary name, so the alias env-var is
-# MCLI_HOST_local (not MC_HOST_local).
+# Midnight Commander apt package.
+#
+# On first invocation mcli auto-creates ~/.mcli/config.json with a
+# default `local` alias pointing at http://localhost:9000 (no creds).
+# The MCLI_HOST_local env-var is NOT reliably honored when a config
+# alias with the same name already exists, so we explicitly overwrite
+# the alias via `mcli alias set` -- that's the guaranteed path.
 MC_ENABLED=0
 if [ -n "${MINIO_HOST:-}" ] && [ -n "${MINIO_ACCESS_KEY:-}" ] && [ -n "${MINIO_SECRET_KEY:-}" ]; then
-    export MCLI_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@${MINIO_HOST}"
+    mcli alias set --api s3v4 local \
+        "http://${MINIO_HOST}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" >/dev/null
     MC_ENABLED=1
     echo ">>> mcli post-MACHINE sync enabled (target: ${MINIO_HOST})"
 fi
