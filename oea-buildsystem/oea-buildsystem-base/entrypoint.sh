@@ -402,6 +402,16 @@ build_machine() {
         echo "================================================================="
         echo "  OK    MACHINE=$MB  ($LABEL)"
         echo "================================================================="
+        # Drop this MB from the current-cycle failed-queue if it's there.
+        # Covers the priority-queue-forces-success case: e.g. oea-retry
+        # rebuilds a MACHINE that failed earlier in the cycle -- without
+        # this, the end-of-cycle retry pass would rebuild it a second
+        # time (near no-op via sstate but still a full bitbake init).
+        if [ -f "$FAILED_QUEUE" ] && grep -Fxq "$MB" "$FAILED_QUEUE"; then
+            grep -Fxv "$MB" "$FAILED_QUEUE" > "${FAILED_QUEUE}.tmp" || true
+            mv "${FAILED_QUEUE}.tmp" "$FAILED_QUEUE"
+            echo "  >>> cleared $MB from end-of-cycle retry queue"
+        fi
     elif [ "$STOP_REQUESTED" = "1" ]; then
         echo "================================================================="
         echo "  STOP  MACHINE=$MB  ($LABEL, bitbake shut down cleanly)"
