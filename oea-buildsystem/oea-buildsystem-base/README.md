@@ -72,7 +72,6 @@ docker run --rm -it \
     -v oea-temp-test:/home/builder/temp \
     -v oea-sstate-test:/home/builder/sstate-cache \
     -v oea-sources-test:/home/builder/sources \
-    -v oea-deploy-test:/home/builder/deploy \
     -e MACHINES=dm900 \
     --entrypoint bash \
     oea-buildsystem-base:dev
@@ -87,7 +86,6 @@ docker run --rm \
     -v oea-temp-test:/home/builder/temp \
     -v oea-sstate-test:/home/builder/sstate-cache \
     -v oea-sources-test:/home/builder/sources \
-    -v oea-deploy-test:/home/builder/deploy \
     -e MACHINES=dm900 \
     -e DISTRO=openatv \
     -e DISTRO_TYPE=release \
@@ -103,11 +101,11 @@ On container start:
    pinned tips.
 2. Writes `/home/builder/workspace/conf/site.conf` with `DL_DIR` / `SSTATE_DIR` + `SSTATE_MIRRORS` / `PREMIRRORS`
    lines if `SSTATE_MIRROR_URL` / `SOURCES_MIRROR_URL` are set.
-3. `chown`s the four volume mount roots (`/home/builder/temp`,
-   `/home/builder/sstate-cache`, `/home/builder/sources`,
-   `/home/builder/deploy`) if they're not already writable by
-   `builder` — Docker-managed volumes initialize root-owned;
-   host-side bind-mounts already at uid 1000 skip this cleanly.
+3. `chown`s the three volume mount roots (`/home/builder/temp`,
+   `/home/builder/sstate-cache`, `/home/builder/sources`) if they're
+   not already writable by `builder` — Docker-managed volumes
+   initialize root-owned; host-side bind-mounts already at uid 1000
+   skip this cleanly.
 4. Starts `sshd` on port 22 (host keys ephemeral, one-time client
    warning per container recreate). Login: `builder` / `builder`.
 5. If a `command:` was passed (dev stacks pass `sleep infinity`),
@@ -118,16 +116,17 @@ On container start:
    - else start at first MACHINE in `$MACHINES`
 7. Enters an **infinite** round-robin loop through `$MACHINES`. For
    each MACHINE `$M`:
-   - `mkdir -p builds/$DISTRO/$DISTRO_TYPE/$M/tmp` (real dir, the whole
-     openatv release tree is volume-mounted -- NOT a symlink; see the
-     libtool inline-source note at the top of `entrypoint.sh`).
-   - Symlinks `builds/$DISTRO/$DISTRO_TYPE/$M/tmp/deploy` → `/home/builder/deploy/$M`
-     to route per-MACHINE artefacts onto the shared deploy volume.
+   - `mkdir -p builds/$DISTRO/$DISTRO_TYPE/$M/tmp/deploy` (real dirs,
+     the whole openatv release tree -- incl. `tmp/deploy/` -- is on
+     the volume-mounted BUILDDIR; NOT symlinks. `tmp/` avoids the
+     libtool inline-source bug; `tmp/deploy/` avoids pseudo's
+     `*at()`-fd crash in `do_package_write_ipk` across a symlink+
+     cross-volume boundary. See the notes at the top of `entrypoint.sh`.)
    - Runs `make MACHINE=$M DISTRO=$DISTRO DISTRO_TYPE=$DISTRO_TYPE $ACTION`.
    - If MinIO write creds are set: `mcli mirror` sstate + sources
      (success or fail — the intermediate blobs are useful either
-     way). Deploy is NOT mirrored — artefacts stay on the shared
-     `oea-buildsystem_deploy` volume for a downstream publishing job.
+     way). Deploy is NOT mirrored — artefacts stay inside the stack's
+     own `<project>_temp` volume, cheap to reproduce from sstate.
    - If bitbake exited cleanly (RC=0 or hard fail): writes `$M` to
      `builds/$DISTRO/$DISTRO_TYPE/.oea-last-machine` so the next cycle passes this MACHINE.
    - If bitbake exited because of a SIGTERM we forwarded to it (see
@@ -192,10 +191,9 @@ this MACHINE from the last completed task stamp.
 
 | Path | Purpose | Typical size |
 |------|---------|--------------|
-| `/home/builder/temp` | TMPDIR — per-MACHINE subdirs (`/home/builder/temp/$M/work`, `/home/builder/temp/$M/sysroots-*`, `/home/builder/temp/$M/stamps`). Persistent so a killed container's build state survives for debug. | 50-200 GB across all MACHINEs |
+| `/home/builder/workspace/builds/$DISTRO/$DISTRO_TYPE` | TMPDIR — per-MACHINE subdirs (`.../$M/tmp/work`, `.../$M/tmp/sysroots-*`, `.../$M/tmp/stamps`, `.../$M/tmp/deploy`). Persistent so a killed container's build state survives for debug. Deploy lives INSIDE this volume as a real dir (not a separate mount): pseudo's `*at()`-fd tracking crashes in `do_package_write_ipk` across a symlink+cross-volume boundary. Artefacts cheap to reproduce from sstate. | 50-200 GB across all MACHINEs |
 | `/home/builder/sstate-cache` | Local sstate cache — shared across MACHINEs in this container. Warmed via `SSTATE_MIRROR_URL` on cache-miss, written back via `mcli mirror` after each MACHINE. | 5-50 GB |
 | `/home/builder/sources` | DL_DIR — upstream source tarballs, shared across MACHINEs. Same read/write flow as sstate. | 2-20 GB |
-| `/home/builder/deploy` | Deploy artefacts (kernel, rootfs, `.ipk` feeds) per-MACHINE subdir (`/home/builder/deploy/$M/`). Shared external volume `oea-buildsystem_deploy` on the host; published downstream (feed hosting, rsync) by a separate job. Not synced to MinIO. | 1-10 GB per MACHINE |
 
 ## When to rebuild this image
 

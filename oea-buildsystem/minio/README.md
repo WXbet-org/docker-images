@@ -15,9 +15,13 @@ anonymous-download policy so bitbake doesn't need credentials on the
 read path. Write access uses a dedicated service account (`builder`).
 
 Deploy artefacts (kernel, rootfs, `.ipk` feeds) do NOT flow through
-MinIO -- they live on the shared `oea-buildsystem_deploy` Docker volume on the
-build host, and a separate downstream job (feed hosting, rsync)
-publishes them from there.
+MinIO -- they live inside each build stack's own `<project>_temp`
+Docker volume at `builds/.../$M/tmp/deploy/`. A downstream job (feed
+hosting, rsync) can extract them from there via `docker cp` /
+`docker run --volumes-from`. Deploy is per-stack, not shared: pseudo's
+fd-tracking crashes across a symlink+cross-volume boundary in
+`do_package_write_ipk`, so `tmp/deploy/` must sit on the same
+filesystem as `tmp/work/`.
 
 ## Deploy
 
@@ -208,7 +212,6 @@ docker run --rm \
     -v <project>_temp:/temp \
     -v <project>_sstate:/sstate-cache \
     -v oea-buildsystem_sources:/sources \
-    -v oea-buildsystem_deploy:/deploy \
     ghcr.io/wxbet-org/oea-buildsystem:6.0
 ```
 
@@ -238,9 +241,10 @@ MACHINEs finish, not at the end of a 50-MACHINE batch. A container
 that dies at MACHINE 30/50 still leaves 29 MACHINEs worth of sstate
 on MinIO for the next attempt or other concurrent containers.
 
-Deploy artefacts are NOT synced to MinIO -- they land on the shared
-`oea-buildsystem_deploy` Docker volume, and a separate publishing job takes it
-from there (see [`oea-buildsystem/README.md`](../README.md)).
+Deploy artefacts are NOT synced to MinIO -- they land inside each
+stack's own `<project>_temp` volume at `builds/.../$M/tmp/deploy/`
+and a separate publishing job extracts from there (see
+[`oea-buildsystem/README.md`](../README.md)).
 
 ## Backup
 

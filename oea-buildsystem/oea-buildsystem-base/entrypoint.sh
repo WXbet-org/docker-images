@@ -38,7 +38,15 @@
 #   /home/builder/workspace/builds/$DISTRO/$DISTRO_TYPE   every MACHINE's BUILDDIR (huge)
 #   /home/builder/sstate-cache  local sstate cache -- warmed from SSTATE_MIRROR_URL on miss
 #   /home/builder/sources       DL_DIR -- warmed from SOURCES_MIRROR_URL on miss
-#   /home/builder/deploy        deploy artefacts per MACHINE (kernel, rootfs, feeds)
+#
+# Deploy artefacts (per-MACHINE kernel / rootfs / feeds) live INSIDE the
+# BUILDDIR volume at builds/.../$M/tmp/deploy/. They are NOT on a separate
+# shared external volume: pseudo's openat/fd tracking breaks across the
+# symlink+cross-volume boundary in do_package_write_ipk (tar-based ipk
+# assembly), producing `got *at() syscall for unknown directory, fd 4`
+# errors on write. Keeping deploy as a real dir on the same volume as
+# tmp/work avoids the whole class of bug. Deploy artefacts are cheap to
+# reproduce from sstate on demand -- sstate is the actual shared cache.
 #
 # Tree is baked into /home/builder/workspace/ by the repo image; entrypoint
 # cd's there before running make.
@@ -47,11 +55,13 @@
 #   /home/builder/sources                              workspace/sources          -> volume (symlink, setup)
 #   /home/builder/sstate-cache                         workspace/builds/$DISTRO/sstate-cache -> volume (symlink, setup)
 #   workspace/builds/$DISTRO/$DISTRO_TYPE/             direct volume mount -- no symlink
-#   /home/builder/deploy/$M                            workspace/builds/.../$M/tmp/deploy -> volume (symlink, per iteration)
+#   workspace/builds/.../$M/tmp/deploy/                real dir inside BUILDDIR volume (no symlink)
 #
 # The `sources` + `sstate-cache` symlinks work because bitbake only
 # reads/writes files inside them by absolute path -- no cd chains
-# whose relative-path arithmetic breaks on the symlink boundary.
+# whose relative-path arithmetic breaks on the symlink boundary, and
+# no fd-based *at() calls that pseudo can lose track of across the
+# symlink+cross-volume boundary.
 #
 # The BUILDDIR tree is deliberately NOT a symlink: libtool-native's
 # do_compile runs inline-source, which sources funclib.sh, which does
@@ -113,8 +123,7 @@ for d in \
     "/home/builder/workspace/builds/$DISTRO" \
     "$BUILDS_ROOT" \
     /home/builder/sstate-cache \
-    /home/builder/sources \
-    /home/builder/deploy
+    /home/builder/sources
 do
     if [ -d "$d" ] && [ ! -w "$d" ]; then
         echo ">>> chown $d (mount root not writable by builder)"
@@ -367,16 +376,6 @@ build_machine() {
     make update || echo "!!! make update failed, continuing with existing tree"
 
     local BUILD_DIR="builds/$DISTRO/$DISTRO_TYPE/$M"
-    # tmp/ is a real directory inside the volume-mounted BUILDS_ROOT --
-    # NOT a symlink (see header notes on the libtool inline-source bug).
-    mkdir -p "$BUILD_DIR/tmp" "/home/builder/deploy/$M"
-    # deploy is a per-MACHINE symlink onto the shared cross-stack deploy
-    # volume. This one's safe: bitbake only stats/writes files inside
-    # deploy, no relative-path cd chains cross it.
-    if [ ! -L "$BUILD_DIR/tmp/deploy" ]; then
-        rm -rf "$BUILD_DIR/tmp/deploy"
-        ln -s "/home/builder/deploy/$M" "$BUILD_DIR/tmp/deploy"
-    fi
 
     # Pre-clean the site.conf symlink -- Makefile's recipe uses `ln -s`
     # (no -f) and fails on stale symlinks from previous builds.
@@ -423,9 +422,10 @@ build_machine() {
 
     # --- MinIO sync (per-MACHINE, right after the build) ---
     # sstate + sources are the two shared cross-host caches. deploy
-    # is intentionally NOT synced to MinIO -- artefacts live on the
-    # shared oea_deploy volume and get published from there by a
-    # separate downstream job (feed hosting, rsync, ...).
+    # is intentionally NOT synced -- artefacts are per-stack, live on
+    # the local temp volume, and are cheap to reproduce from sstate.
+    # If you need them centrally published (feed hosting, rsync, ...),
+    # do it from tmp/deploy/ in a separate downstream job.
     if [ "$MC_ENABLED" = "1" ]; then
         echo ">>> mcli mirror sstate + sources -> MinIO"
         mcli mirror --overwrite /home/builder/sstate-cache/ "local/sstate-${DISTRO}-${BRANCH}/" \

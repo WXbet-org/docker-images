@@ -69,16 +69,20 @@ You'll end up with buckets `sstate-openatv-6.0` and `sources`, plus
 a service account (`builder` + secret key) that the build containers
 use.
 
-You also need two shared Docker volumes for sources + deploy (all
-oea stacks on this host share them):
+You also need one shared Docker volume for sources (URL-content-
+addressed, safe to share across all oea stacks on this host):
 
 ```sh
 docker volume create oea-buildsystem_sources
-docker volume create oea-buildsystem_deploy
 # fix ownership so builder (uid 1000) can write:
-docker run --rm --user 0:0 -v oea-buildsystem_sources:/x -v oea-buildsystem_deploy:/y \
-    alpine chown -R 1000:1000 /x /y
+docker run --rm --user 0:0 -v oea-buildsystem_sources:/x \
+    alpine chown -R 1000:1000 /x
 ```
+
+Deploy artefacts (per-MACHINE kernel/rootfs/feeds) live inside each
+stack's own `temp` volume at `builds/.../$M/tmp/deploy/` and are NOT
+shared -- pseudo's fd-tracking crashes across a symlink+cross-volume
+boundary in `do_package_write_ipk`. Reproduce from sstate on demand.
 
 ### 3. Pick a compose stack + deploy
 
@@ -221,8 +225,9 @@ STACK=b SSH_PORT=2223 MACHINES="vuduo4k gbquad4k" \
 ```
 
 Container names: `oea-builder-auto-a` and `oea-builder-auto-b`. Both
-share the external `oea-buildsystem_sources` + `oea-buildsystem_deploy` volumes on the
-host; per-stack `<project>_temp` + `<project>_sstate` stay isolated.
+share the external `oea-buildsystem_sources` volume on the host;
+per-stack `<project>_temp` + `<project>_sstate` stay isolated (deploy
+lives inside each stack's `<project>_temp`).
 
 Each stack cycles its own subset independently. When host A finishes
 `qtbase-native` for `dm900`, the resulting sstate blob is on MinIO
@@ -263,9 +268,13 @@ produced some intermediate sstate blobs and source fetches that are
 useful to the next attempt.
 
 Deploy artefacts (`.ipk` feeds, kernel, rootfs) are NOT synced to
-MinIO. They land on the shared `oea-buildsystem_deploy` volume on the host, and
-a separate downstream job publishes them (feed hosting, rsync, ...
-— TBD).
+MinIO. They live inside each stack's own `<project>_temp` volume at
+`builds/.../$M/tmp/deploy/` — extract via `docker cp` / `docker run
+--volumes-from` or a separate publishing job (feed hosting, rsync,
+... — TBD). Deploy is per-stack, not shared: pseudo's fd-tracking
+crashes across a symlink+cross-volume boundary in `do_package_write_ipk`,
+so `tmp/deploy/` must sit on the same filesystem as `tmp/work/`.
+Artefacts are cheap to reproduce from sstate when needed.
 
 Full bucket setup + service account creation in
 [`minio/README.md`](./minio/README.md).
@@ -344,10 +353,10 @@ lookup:
 | `MINIO_SECRET_KEY` | *(unset)* | Corresponding secret key. |
 | `SSH_PORT` | `2222` | Host port for sshd. |
 
-Volumes: `/home/builder/temp` (TMPDIR, per-MACHINE subdirs),
+Volumes: `/home/builder/workspace/builds/$DISTRO/$DISTRO_TYPE` (TMPDIR,
+per-MACHINE subdirs, incl. `tmp/deploy/`),
 `/home/builder/sstate-cache` (local sstate), `/home/builder/sources`
-(DL_DIR), `/home/builder/deploy` (per-MACHINE artefacts). See base
-README for size expectations. Baked tree lives at
+(DL_DIR). See base README for size expectations. Baked tree lives at
 `/home/builder/workspace/` — that's where `make MACHINE=... image`
 runs from.
 

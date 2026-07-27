@@ -2,20 +2,24 @@
 #
 # Same lifecycle as docker-compose.build.volume.yaml (entrypoint loops
 # over $MACHINES round-robin forever, mc-mirror to MinIO after each
-# MACHINE, state file resumes on restart), but the four storage
+# MACHINE, state file resumes on restart), but the three storage
 # volumes are bind-mounted from host paths instead of Docker-managed
 # named volumes. Lets you `ls /var/lib/oea-build/...` from the host or
 # point at a shared farm filesystem.
 #
+# Deploy artefacts live inside TEMP_DIR at builds/.../$M/tmp/deploy/
+# -- NOT on a separate bind-mount. Pseudo's openat/fd tracking crashes
+# in do_package_write_ipk when tar crosses a symlink onto a second
+# volume, so deploy must sit on the same filesystem as tmp/work.
+#
 # WARNING -- UID/GID: the container runs as `builder` (uid/gid 1000).
-# All four bind-mount targets on the host MUST be owned by 1000 or
+# All three bind-mount targets on the host MUST be owned by 1000 or
 # the entrypoint immediately fails with "Permission denied". One-time
 # host fix:
 #   sudo mkdir -p \
 #        ${TEMP_DIR:-/var/lib/oea-build/temp} \
 #        ${SSTATE_DIR:-/var/lib/oea-build/sstate} \
-#        ${SOURCES_DIR:-/var/lib/oea-build/sources} \
-#        ${DEPLOY_DIR:-/var/lib/oea-build/deploy}
+#        ${SOURCES_DIR:-/var/lib/oea-build/sources}
 #   sudo chown -R 1000:1000 /var/lib/oea-build
 #
 # Usage:
@@ -32,7 +36,6 @@
 #     TEMP_DIR=/data/oea/temp         host path for /temp    (default: /var/lib/oea-build/temp)
 #     SSTATE_DIR=/data/oea/sstate     host path for /sstate-cache (default: /var/lib/oea-build/sstate)
 #     SOURCES_DIR=/data/oea/sources   host path for /sources (default: /var/lib/oea-build/sources)
-#     DEPLOY_DIR=/data/oea/deploy     host path for /deploy  (default: /var/lib/oea-build/deploy)
 #
 #   Build tuning:
 #     BRANCH=6.0                      composed image tag (default: 6.0)
@@ -87,10 +90,12 @@ services:
       # See docker-compose.build.volume.yaml for why `temp` mounts at
       # the openatv release dir instead of /home/builder/temp -- a
       # tmp/ symlink there breaks libtool-native's do_compile.
+      # tmp/deploy/ lives inside this same volume as a real dir --
+      # pseudo's *at()-fd tracking breaks across a symlink+cross-volume
+      # boundary in do_package_write_ipk, so no separate DEPLOY mount.
       - "${TEMP_DIR:-/var/lib/oea-build/temp}:/home/builder/workspace/builds/${DISTRO:-openatv}/${DISTRO_TYPE:-release}"
       - "${SSTATE_DIR:-/var/lib/oea-build/sstate}:/home/builder/sstate-cache"
       - "${SOURCES_DIR:-/var/lib/oea-build/sources}:/home/builder/sources"
-      - "${DEPLOY_DIR:-/var/lib/oea-build/deploy}:/home/builder/deploy"
 
     security_opt:
       - apparmor=unconfined

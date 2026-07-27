@@ -87,15 +87,18 @@ services:
       COLORTERM: "${COLORTERM:-truecolor}"
 
     volumes:
-      # `temp` holds every MACHINE's BUILDDIR (conf/env/tmp). Mounted
-      # directly at the openatv release dir -- not via a symlink -- so
-      # bitbake's PWD stays on physical paths. A tmp/ symlink here
+      # `temp` holds every MACHINE's BUILDDIR (conf/env/tmp/deploy).
+      # Mounted directly at the openatv release dir -- not via a symlink
+      # -- so bitbake's PWD stays on physical paths. A tmp/ symlink here
       # breaks libtool-native's do_compile (inline-source's funclib.sh
       # cd's a 7-up relative path that only resolves off a real cwd).
+      # tmp/deploy/ stays a real dir on the same volume (no separate
+      # deploy mount) to avoid pseudo's *at()-fd crash in
+      # do_package_write_ipk when tar crosses a symlink onto a second
+      # volume.
       - "temp:/home/builder/workspace/builds/${DISTRO:-openatv}/${DISTRO_TYPE:-release}"
       - "sstate:/home/builder/sstate-cache"
       - "sources:/home/builder/sources"
-      - "deploy:/home/builder/deploy"
 
     # Entrypoint runs its setup, then exec's this command as PID 1.
     # Container idles waiting for docker compose exec / SSH.
@@ -126,16 +129,13 @@ volumes:
   #     name: <batch-project>_temp
   temp:
   sstate:
-  # sources + deploy: shared external volumes across all oea stacks
-  # on the host. Create once with:
+  # sources: shared external volume across all oea stacks on the host.
+  # URL-content-addressed -- safe to share, no MinIO round-trip for
+  # locally-cached tarballs. Create once with:
   #   docker volume create oea-buildsystem_sources
-  #   docker volume create oea-buildsystem_deploy
   #   docker run --rm --user 0:0 \
-  #       -v oea-buildsystem_sources:/x -v oea-buildsystem_deploy:/y \
-  #       alpine chown -R 1000:1000 /x /y
+  #       -v oea-buildsystem_sources:/x \
+  #       alpine chown -R 1000:1000 /x
   sources:
     external: true
     name: oea-buildsystem_sources
-  deploy:
-    external: true
-    name: oea-buildsystem_deploy
