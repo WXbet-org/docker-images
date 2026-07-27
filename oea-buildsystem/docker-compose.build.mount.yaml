@@ -85,6 +85,7 @@ services:
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-}"
       TERM: "${TERM:-xterm-256color}"
       COLORTERM: "${COLORTERM:-truecolor}"
+      TZ: "${TZ:-UTC}"
 
     volumes:
       # See docker-compose.build.volume.yaml for why `temp` mounts at

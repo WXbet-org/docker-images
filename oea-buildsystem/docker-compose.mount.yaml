@@ -77,6 +77,7 @@ services:
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-}"
       TERM: "${TERM:-xterm-256color}"
       COLORTERM: "${COLORTERM:-truecolor}"
+      TZ: "${TZ:-UTC}"
 
     volumes:
       - "${TEMP_DIR:-/var/lib/oea-build/temp}:/home/builder/workspace/builds/${DISTRO:-openatv}/${DISTRO_TYPE:-release}"
