@@ -23,14 +23,14 @@
 #   sudo chown -R 1000:1000 /var/lib/oea-build
 #
 # Usage:
-#   MACHINES="dm900 dm920" docker compose -f docker-compose.build.mount.yaml up
-#   MACHINES="dm900 dm920" docker compose -f docker-compose.build.mount.yaml up -d
+#   MACHINES="sf8008 vuzero4k" docker compose -f docker-compose.build.mount.yaml up
+#   MACHINES="sf8008 vuzero4k" docker compose -f docker-compose.build.mount.yaml up -d
 #   docker compose -f docker-compose.build.mount.yaml logs -f
 #
 # Environment overrides:
 #
 #   Required:
-#     MACHINES="dm900 dm920 ..."      space-separated list of MACHINEs
+#     MACHINES="sf8008 vuzero4k ..."      space-separated list of MACHINEs
 #
 #   Host paths (bind-mount sources):
 #     TEMP_DIR=/data/oea/temp         host path for /temp    (default: /var/lib/oea-build/temp)
@@ -71,7 +71,7 @@ services:
       - "${SSH_PORT:-2222}:22"
 
     environment:
-      MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"dm900 dm920\")}"
+      MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"sf8008 vuzero4k\")}"
       SKIP_TO_MACHINE: "${SKIP_TO_MACHINE:-}"
       DISTRO: "${DISTRO:-openatv}"
       DISTRO_TYPE: "${DISTRO_TYPE:-release}"

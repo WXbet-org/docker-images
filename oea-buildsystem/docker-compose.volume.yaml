@@ -9,9 +9,9 @@
 #   ssh -p 2222 builder@localhost    # password: builder
 #
 # Then inside:
-#   make MACHINE=dm900 image             # full image build
-#   MACHINE=dm900 bitbake enigma2        # single-recipe rebuild
-#   MACHINE=dm900 bitbake -c menuconfig virtual/kernel
+#   make MACHINE=sf8008 image             # full image build
+#   MACHINE=sf8008 bitbake enigma2        # single-recipe rebuild
+#   MACHINE=sf8008 bitbake -c menuconfig virtual/kernel
 #
 # Use cases: iterative debug of a failing recipe, one-off single-
 # package rebuild, kernel menuconfig, poking at bitbake internals.
@@ -30,14 +30,14 @@
 # For bind-mount instead of named volumes, use docker-compose.mount.yaml.
 #
 # Usage:
-#   MACHINE=dm900 docker compose -f docker-compose.volume.yaml up -d
+#   MACHINE=sf8008 docker compose -f docker-compose.volume.yaml up -d
 #   docker compose -f docker-compose.volume.yaml exec oea-build bash
 #   docker compose -f docker-compose.volume.yaml down     # when done
 #
 # Environment overrides:
 #
 #   Required:
-#     MACHINE=dm900                   single MACHINE (drives deploy symlink)
+#     MACHINE=sf8008                   single MACHINE (drives deploy symlink)
 #
 #   Build tuning:
 #     BRANCH=6.0                      composed image tag (default: 6.0)
@@ -56,7 +56,7 @@
 services:
   oea-build:
     image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
-    container_name: oea-build-dev-${MACHINE:?MACHINE env var must be set (e.g. dm900)}
+    container_name: oea-build-dev-${MACHINE:?MACHINE env var must be set (e.g. sf8008)}
     hostname: oea-build-dev-${MACHINE}
 
     networks:

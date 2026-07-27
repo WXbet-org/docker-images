@@ -96,12 +96,12 @@ Four ready-made compose files cover the two axes {auto-loop vs dev}
 | [`docker-compose.volume.yaml`](docker-compose.volume.yaml)             | long-running idle: setup → `sleep infinity` (SSH + exec)                 | Docker-managed volumes |
 | [`docker-compose.mount.yaml`](docker-compose.mount.yaml)               | long-running idle: setup → `sleep infinity` (SSH + exec)                 | Bind-mounted host paths |
 
-**Auto-loop (`.build.` variants)** — takes `MACHINES="dm900 dm920 …"`
+**Auto-loop (`.build.` variants)** — takes `MACHINES="sf8008 vuzero4k …"`
 and cycles round-robin, forever. This is what you want for a farm
 worker. Minimum viable deploy:
 
 ```sh
-export MACHINES="dm900 dm920"
+export MACHINES="sf8008 vuzero4k"
 export MINIO_HOST=minio:9000
 export MINIO_ACCESS_KEY=builder
 export MINIO_SECRET_KEY=<the-secret-from-minio-setup>
@@ -116,7 +116,7 @@ docker compose -p oea-a -f docker-compose.build.volume.yaml logs -f
 then idles. Attach to drive builds by hand:
 
 ```sh
-MACHINE=dm900 docker compose -f docker-compose.volume.yaml up -d
+MACHINE=sf8008 docker compose -f docker-compose.volume.yaml up -d
 docker compose -f docker-compose.volume.yaml exec oea-build bash
 # or:
 ssh -p 2222 builder@localhost         # password: builder
@@ -151,8 +151,8 @@ If the retry also fails the MACHINE is not queued again this cycle
 end-of-cycle":
 
 ```sh
-docker compose exec oea-build oea-retry dm900               # queue one
-docker compose exec oea-build oea-retry dm900 dm920         # multiple
+docker compose exec oea-build oea-retry sf8008               # queue one
+docker compose exec oea-build oea-retry sf8008 vuzero4k         # multiple
 docker compose exec oea-build oea-retry --list              # show queue
 docker compose exec oea-build oea-retry --clear             # empty queue
 ```
@@ -216,7 +216,7 @@ docker compose -p oea-a -f docker-compose.build.volume.yaml up -d
 
 ```sh
 # Stack a
-STACK=a SSH_PORT=2222 MACHINES="dm900 dm920" \
+STACK=a SSH_PORT=2222 MACHINES="sf8008 vuzero4k" \
     docker compose -p oea-a -f docker-compose.build.volume.yaml up -d
 
 # Stack b (distinct STACK + distinct SSH_PORT!)
@@ -230,8 +230,8 @@ per-stack `<project>_temp` + `<project>_sstate` stay isolated (deploy
 lives inside each stack's `<project>_temp`).
 
 Each stack cycles its own subset independently. When host A finishes
-`qtbase-native` for `dm900`, the resulting sstate blob is on MinIO
-within seconds; when host B needs the same blob for `dm920` an hour
+`qtbase-native` for `sf8008`, the resulting sstate blob is on MinIO
+within seconds; when host B needs the same blob for `vuzero4k` an hour
 later, it fetches once via HTTP instead of rebuilding.
 
 If a host dies mid-cycle: volumes stay, `compose up` on the same
@@ -340,7 +340,7 @@ lookup:
 
 | Name | Default | Purpose |
 |---|---|---|
-| `MACHINES` | *(required)* | Space-separated list, e.g. `"dm900 dm920"`. Fallback: single `MACHINE=`. |
+| `MACHINES` | *(required)* | Space-separated list, e.g. `"sf8008 vuzero4k"`. Fallback: single `MACHINE=`. |
 | `SKIP_TO_MACHINE` | *(unset)* | Force first-cycle start point (overrides state file). |
 | `DISTRO` | `openatv` | Distro built from `build-enviroment`. |
 | `DISTRO_TYPE` | `release` | e.g. `release`, `experimental`. |

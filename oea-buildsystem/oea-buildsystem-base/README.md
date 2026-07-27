@@ -72,7 +72,7 @@ docker run --rm -it \
     -v oea-temp-test:/home/builder/temp \
     -v oea-sstate-test:/home/builder/sstate-cache \
     -v oea-sources-test:/home/builder/sources \
-    -e MACHINES=dm900 \
+    -e MACHINES=sf8008 \
     --entrypoint bash \
     oea-buildsystem-base:dev
 ```
@@ -86,7 +86,7 @@ docker run --rm \
     -v oea-temp-test:/home/builder/temp \
     -v oea-sstate-test:/home/builder/sstate-cache \
     -v oea-sources-test:/home/builder/sources \
-    -e MACHINES=dm900 \
+    -e MACHINES=sf8008 \
     -e DISTRO=openatv \
     -e DISTRO_TYPE=release \
     -e ACTION=image \
@@ -144,12 +144,12 @@ On container start:
   next full cycle will visit it in its normal round-robin slot).
 - **Priority queue via `oea-retry`** — inside the container:
   ```
-  oea-retry dm900              # queue one
-  oea-retry dm900 dm920        # queue several, processed in order
+  oea-retry sf8008              # queue one
+  oea-retry sf8008 vuzero4k        # queue several, processed in order
   oea-retry --list             # show queue
   oea-retry --clear            # empty queue
   ```
-  Attach with `docker compose exec oea-build oea-retry dm900` or
+  Attach with `docker compose exec oea-build oea-retry sf8008` or
   over SSH. The queue is drained before each natural round-robin
   iteration — the currently-running build is NOT interrupted, but
   your MACHINE(s) go next.
@@ -175,7 +175,7 @@ this MACHINE from the last completed task stamp.
 
 | Name | Default | Purpose |
 |------|---------|---------|
-| `MACHINES` | *(required)* | Space-separated list, e.g. `"dm900 dm920 vuduo4k"`. Fallback: single `MACHINE=`. |
+| `MACHINES` | *(required)* | Space-separated list, e.g. `"sf8008 vuzero4k vuduo4k"`. Fallback: single `MACHINE=`. |
 | `SKIP_TO_MACHINE` | *(unset)* | Force first-cycle start point (overrides state file). |
 | `DISTRO` | `openatv` | Distro built from `build-enviroment`. |
 | `DISTRO_TYPE` | `release` | e.g. `release`, `experimental`. |

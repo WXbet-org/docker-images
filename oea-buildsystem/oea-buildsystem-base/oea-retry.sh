@@ -7,8 +7,8 @@
 # current one finishes.
 #
 # Usage:
-#   oea-retry dm900               # single
-#   oea-retry dm900 dm920 dm7080  # multiple, processed in order
+#   oea-retry sf8008               # single
+#   oea-retry sf8008 vuzero4k gbquad4kpro  # multiple, processed in order
 #   oea-retry --list              # show current queue
 #   oea-retry --clear             # empty the queue
 #

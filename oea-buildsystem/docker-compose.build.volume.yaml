@@ -22,14 +22,14 @@
 # / /sources / /deploy from the host), use docker-compose.build.mount.yaml.
 #
 # Usage:
-#   MACHINES="dm900 dm920" docker compose -p oea-batch-a -f docker-compose.build.volume.yaml up
-#   MACHINES="dm900 dm920" docker compose -p oea-batch-a -f docker-compose.build.volume.yaml up -d
+#   MACHINES="sf8008 vuzero4k" docker compose -p oea-batch-a -f docker-compose.build.volume.yaml up
+#   MACHINES="sf8008 vuzero4k" docker compose -p oea-batch-a -f docker-compose.build.volume.yaml up -d
 #   docker compose -p oea-batch-a -f docker-compose.build.volume.yaml logs -f
 #
 # Environment overrides (via .env, shell, or your orchestrator's stack env):
 #
 #   Required:
-#     MACHINES="dm900 dm920 ..."      space-separated list of MACHINEs
+#     MACHINES="sf8008 vuzero4k ..."      space-separated list of MACHINEs
 #
 #   Build tuning:
 #     BRANCH=6.0                      composed image tag (default: 6.0)
@@ -87,7 +87,7 @@ services:
       - "${SSH_PORT:-2222}:22"
 
     environment:
-      MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"dm900 dm920\")}"
+      MACHINES: "${MACHINES:?MACHINES env var must be set, space-separated (e.g. \"sf8008 vuzero4k\")}"
       SKIP_TO_MACHINE: "${SKIP_TO_MACHINE:-}"
       DISTRO: "${DISTRO:-openatv}"
       DISTRO_TYPE: "${DISTRO_TYPE:-release}"

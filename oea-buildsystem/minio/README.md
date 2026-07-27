@@ -202,7 +202,7 @@ three credentials for the write side:
 ```sh
 docker run --rm \
     --network oea-build \
-    -e MACHINES="dm900 dm920" \
+    -e MACHINES="sf8008 vuzero4k" \
     -e BRANCH=6.0 \
     -e DISTRO=openatv \
     -e SSTATE_MIRROR_URL=http://minio:9000/sstate-openatv-6.0 \

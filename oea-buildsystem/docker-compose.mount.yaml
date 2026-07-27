@@ -4,7 +4,7 @@
 # then idles on `sleep infinity` waiting for you to exec / SSH in),
 # but the four storage volumes are bind-mounted from host paths
 # instead of Docker-managed named volumes. Lets you `ls
-# /var/lib/oea-build/temp/dm900/work/...` from the host or point at
+# /var/lib/oea-build/temp/sf8008/work/...` from the host or point at
 # shared farm filesystem paths.
 #
 # Deploy artefacts live inside TEMP_DIR at builds/.../$M/tmp/deploy/
@@ -20,19 +20,19 @@
 #   sudo chown -R 1000:1000 /var/lib/oea-build
 #
 # Usage:
-#   MACHINE=dm900 docker compose -f docker-compose.mount.yaml up -d
+#   MACHINE=sf8008 docker compose -f docker-compose.mount.yaml up -d
 #   docker compose -f docker-compose.mount.yaml exec oea-build bash
 #   ssh -p 2222 builder@localhost    # password: builder
 #   docker compose -f docker-compose.mount.yaml down     # when done
 #
 # Inside the exec'd shell:
-#   make MACHINE=dm900 image             # full image build
-#   MACHINE=dm900 bitbake enigma2        # single-recipe rebuild
+#   make MACHINE=sf8008 image             # full image build
+#   MACHINE=sf8008 bitbake enigma2        # single-recipe rebuild
 #
 # Environment overrides:
 #
 #   Required:
-#     MACHINE=dm900                   single MACHINE (drives deploy symlink)
+#     MACHINE=sf8008                   single MACHINE (drives deploy symlink)
 #
 #   Host paths (bind-mount sources):
 #     TEMP_DIR=/data/oea/temp         host path for /temp    (default: /var/lib/oea-build/temp)
@@ -55,7 +55,7 @@
 services:
   oea-build:
     image: ghcr.io/wxbet-org/oea-buildsystem:${BRANCH:-6.0}
-    container_name: oea-build-dev-${MACHINE:?MACHINE env var must be set (e.g. dm900)}
+    container_name: oea-build-dev-${MACHINE:?MACHINE env var must be set (e.g. sf8008)}
     hostname: oea-build-dev-${MACHINE}
 
     networks:
