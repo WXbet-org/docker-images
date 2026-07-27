@@ -1,0 +1,111 @@
+# dreamos-feed -- serves the .deb package repository produced by the
+# dreamos-buildsystem batch/dev stacks. This variant attaches to the
+# same Docker-managed named volume that the build stacks use, so the
+# feed always mirrors the live build output (read-only).
+#
+# For a host bind-mount instead of a named volume (browse the served
+# tree straight from the host filesystem), use docker-compose.mount.yaml.
+#
+# The volume needs to have been created by a dreamos-buildsystem
+# compose deploy already (its default name is <project>_dreamos_build_data
+# under the build stack's compose project). Point at it via the
+# BUILD_VOLUME env-var (see below).
+#
+# Usage:
+#   BUILD_VOLUME=<build-project>_dreamos_build_data \
+#       docker compose -f docker-compose.volume.yaml up -d
+#
+# Environment overrides:
+#
+#   Required (unless the default matches your build stack):
+#     BUILD_VOLUME=<build-project>_dreamos_build_data
+#                              Docker-managed volume name shared with
+#                              the running dreamos-buildsystem stack.
+#                              Default: dreamos-builder_ci_dreamos_build_data
+#
+#   HTTP / HTTPS mode:
+#     FEED_DOMAIN=feed.example.com
+#                              Public FQDN. When set, Caddy provisions
+#                              a Let's Encrypt cert automatically and
+#                              serves HTTPS on 443. When unset, the
+#                              feed is HTTP-only on FEED_HTTP_PORT.
+#     FEED_ACME_EMAIL=admin@example.com
+#                              LE account email. Defaults to
+#                              admin@${FEED_DOMAIN} -- change it if
+#                              that alias doesn't reach a human.
+#     FEED_HTTP_PORT=8080      Host port for HTTP (default: 8080)
+#     FEED_HTTPS_PORT=8443     Host port for HTTPS (default: 8443)
+#
+#   Rescan behaviour:
+#     RESCAN_INTERVAL=60       Seconds between symlink tree refreshes
+#                              in entrypoint.sh (default: 60). New
+#                              MACHINEs finishing builds appear in the
+#                              tree at the next rescan.
+#
+#   Container:
+#     TAG=2                    caddy image tag (default: 2)
+#
+# Caddy needs port 80 reachable from the internet for the LE HTTP-01
+# challenge. If you're not exposing 80:80 (e.g. because something else
+# on the host holds it), either front dreamos-feed with a proxy that
+# forwards ACME challenges, or switch to DNS-01 by extending this
+# compose with a Caddy build that includes your DNS provider plugin.
+
+services:
+  feed:
+    image: caddy:${TAG:-2}
+    container_name: dreamos-feed
+    hostname: dreamos-feed
+
+    ports:
+      - "${FEED_HTTP_PORT:-8080}:80"
+      - "${FEED_HTTPS_PORT:-8443}:443"
+
+    environment:
+      # See Caddyfile for how these two env-vars switch HTTP vs HTTPS.
+      # FEED_DOMAIN unset -> HTTP-only, FEED_ACME_EMAIL is ignored.
+      # FEED_DOMAIN set   -> Caddy provisions an LE cert registered
+      #                      under FEED_ACME_EMAIL. Default derives an
+      #                      admin@ address from the domain itself, so
+      #                      the two env-vars stay coupled unless the
+      #                      user overrides FEED_ACME_EMAIL explicitly.
+      FEED_DOMAIN: "${FEED_DOMAIN:-}"
+      FEED_ACME_EMAIL: "${FEED_ACME_EMAIL:-admin@${FEED_DOMAIN}}"
+      RESCAN_INTERVAL: "${RESCAN_INTERVAL:-60}"
+
+    # entrypoint.sh scans the build tree, populates /srv/feed with
+    # symlinks, then exec's caddy. It also loops in the background to
+    # re-scan every RESCAN_INTERVAL seconds so newly built MACHINEs
+    # appear without a container restart.
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+    volumes:
+      - "./Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "./entrypoint.sh:/entrypoint.sh:ro"
+      # The build stack's data volume mounted read-only, at the SAME
+      # path the build container uses (/home/builder) so the symlinks
+      # entrypoint.sh writes to point at valid on-container paths.
+      # A compromised or misbehaving feed can never mutate build state
+      # because of the :ro flag.
+      - "build_data:/home/builder:ro"
+      # LE certs + Caddy state persist across container restarts.
+      - "caddy_data:/data"
+      - "caddy_config:/config"
+
+    # /srv/feed lives on a tmpfs -- it's just a set of symlinks pointing
+    # into /home/builder, cheap to rebuild on every container start.
+    tmpfs:
+      - /srv/feed
+
+    restart: unless-stopped
+
+volumes:
+  # External (shared with the running dreamos-buildsystem stack).
+  # Override the default here if your build stack uses a different
+  # compose project name (`-p` on `docker compose up`).
+  build_data:
+    external: true
+    name: "${BUILD_VOLUME:-dreamos-builder_ci_dreamos_build_data}"
+  # Managed per feed stack -- certs + Caddy state.
+  caddy_data:
+  caddy_config:

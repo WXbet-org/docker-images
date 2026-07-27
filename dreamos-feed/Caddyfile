@@ -1,0 +1,61 @@
+# dreamos-feed Caddyfile
+#
+# Serves a clean symlink tree that /entrypoint.sh built under /srv/feed
+# from the read-only build volume mounted at /home/builder. The URL
+# structure mirrors the on-disk layout 1:1, so no rewrite logic is
+# needed here -- URL /<fork>/<branch>/<channel>/<machine>/all/foo.deb
+# resolves via symlink directly to the actual .deb file.
+#
+# Two operating modes selected by env-var:
+#
+#   FEED_DOMAIN unset (or ":80")
+#     -> plain HTTP on port 80 inside the container. Suitable for
+#        internal / dev use, or when a reverse proxy is doing TLS.
+#
+#   FEED_DOMAIN set to a public domain (e.g. feed.example.com)
+#     -> Caddy provisions a Let's Encrypt certificate automatically
+#        (ACME HTTP-01 needs port 80 reachable from the internet), and
+#        the site is served over HTTPS on port 443. Cert + LE state
+#        live on the caddy_data volume across restarts.
+#
+# FEED_ACME_EMAIL is what LE registers the cert with. Required when
+# FEED_DOMAIN is a public domain; ignored otherwise. Defaults to
+# admin@${FEED_DOMAIN} in the compose files -- change it if that
+# won't reach a human.
+
+{
+    email {$FEED_ACME_EMAIL}
+    admin off
+}
+
+{$FEED_DOMAIN::80} {
+    root * /srv/feed
+    encode zstd gzip
+
+    # Directory browsing on -- lets `opkg update`
+    # list Packages.gz and humans navigate the tree from a browser.
+    # Anything not under the symlink tree (sources/, .git/,
+    # tmp-glibc/work/, sstate/, ...) is not reachable because Caddy
+    # is rooted at /srv/feed, not at /home/builder -- the symlink
+    # tree only exposes deploy/deb/* and deploy/images/<MACHINE>/.
+    file_server browse
+
+    # Content types the built-in mime map doesn't already cover.
+    # .deb -- Debian binary package. dpkg / opkg accept either the
+    # canonical vnd.debian.binary-package or application/x-deb; the
+    # canonical one is what apt-repo readers expect.
+    @deb path *.deb
+    header @deb Content-Type application/vnd.debian.binary-package
+
+    # Detached GPG signature files (Release.gpg). Signed InRelease
+    # files are text/plain by default which is already correct.
+    @gpg path *.gpg
+    header @gpg Content-Type application/pgp-signature
+
+    # Access + error log to stdout so `docker logs` shows requests
+    # live.
+    log {
+        output stdout
+        format console
+    }
+}
