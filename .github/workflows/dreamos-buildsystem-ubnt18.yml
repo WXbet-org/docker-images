@@ -10,15 +10,20 @@
 #              the existing sources image. Uses regctl and OCI cross-repo
 #              blob mount -- no layer blobs downloaded. Pushes to
 #              ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18:vX.Y.Z (+ :latest)
+#     Phase 3: Build the feed image (caddy:2 + Caddyfile + entrypoint.sh
+#              baked in) and push to
+#              ghcr.io/wxbet-org/dreamos-buildsystem-feed:vX.Y.Z (+ :latest).
+#              Versioned together with ubnt18 so the compose files in this
+#              repo can reference a matching image without a separate tag.
 #
-#   MANUAL (workflow_dispatch) — base-only sanity check:
-#     Phase 1 runs but `push: false` — the base image is built to
-#     verify Dockerfile / apt / pip / ESM-attach still work, but no
-#     bytes land on GHCR. Phase 2 is skipped entirely. Use this to
+#   MANUAL (workflow_dispatch) — sanity check:
+#     Phase 1 and Phase 3 run but `push: false` — base and feed images
+#     are built to verify their Dockerfiles still work, but no bytes
+#     land on GHCR. Phase 2 (compose) is skipped entirely. Use this to
 #     iterate on Dockerfile changes without cutting a release or
 #     overwriting :latest.
 #
-# `:latest` on both images (release mode only) is updated only when
+# `:latest` on all three images (release mode only) is updated only when
 # this tag is the highest sortable dreamos-buildsystem-ubnt18/* tag
 # (guards against late hotfixes on older branches overwriting :latest).
 # ---------------------------------------------------------------------
@@ -35,8 +40,10 @@ env:
   BASE_IMAGE:    ghcr.io/wxbet-org/dreamos-buildsystem-base
   SOURCES_IMAGE: ghcr.io/wxbet-org/dreamos-buildsystem-sources
   UBNT18_IMAGE:  ghcr.io/wxbet-org/dreamos-buildsystem-ubnt18
+  FEED_IMAGE:    ghcr.io/wxbet-org/dreamos-buildsystem-feed
   BASE_DIR:      dreamos-buildsystem-ubnt18/dreamos-buildsystem-base
   UBNT18_DIR:    dreamos-buildsystem-ubnt18
+  FEED_DIR:      dreamos-buildsystem-ubnt18/dreamos-buildsystem-feed
   TAG_PREFIX:    dreamos-buildsystem-ubnt18/
 
 jobs:
@@ -170,3 +177,32 @@ jobs:
           DST:     ${{ env.UBNT18_IMAGE }}:latest
         run: |
           "${UBNT18_DIR}/compose.sh"
+
+      # ================== PHASE 3: build + push feed image ==================
+      # Stock caddy:2 + Caddyfile + entrypoint.sh baked in. Independent
+      # of Phase 1/2 (no compose from base), so it also runs on
+      # workflow_dispatch as a sanity check (push=false).
+
+      - name: Compute feed tag list
+        id: feed_tags
+        run: |
+          V="${{ steps.tags.outputs.version }}"
+          if [ "${{ steps.tags.outputs.is_release }}" != "1" ]; then
+              TAG_LIST="${FEED_IMAGE}:test-build"
+          elif [ "${{ steps.tags.outputs.is_highest }}" = "1" ]; then
+              TAG_LIST="${FEED_IMAGE}:${V},${FEED_IMAGE}:latest"
+          else
+              TAG_LIST="${FEED_IMAGE}:${V}"
+          fi
+          echo "tag_list=${TAG_LIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and, on tag push, push) feed image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ env.FEED_DIR }}
+          push: ${{ steps.tags.outputs.is_release == '1' }}
+          tags: ${{ steps.feed_tags.outputs.tag_list }}
+          # caddy:2 is a rolling upstream tag -- pull fresh so security
+          # updates land in every release; total build is a handful of
+          # COPY lines so the miss cost is negligible.
+          no-cache: true

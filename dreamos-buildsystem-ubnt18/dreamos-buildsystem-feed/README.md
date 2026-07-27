@@ -6,17 +6,22 @@ opkg on the target box can install packages from it.
 
 ## Design in one paragraph
 
-Stock `caddy:2` (~50 MB Alpine image) with a small `entrypoint.sh`
-that scans the read-only build volume at container start (and every
-`RESCAN_INTERVAL` seconds after) and materializes a clean symlink
-tree under `/srv/feed`. Each existing MACHINE build gets one symlink
-directly at its `tmp-glibc/deploy/` dir, so the URL layout the box
-sees matches the on-disk layout 1:1 -- no URL-rewriting logic on the
-Caddy side, no fiddling with bitbake internals, and nothing outside
-the deploy dirs is HTTP-reachable (sources/, .git/, tmp-glibc/work/,
-sstate/, ... stay physically mounted but Caddy is rooted at
-`/srv/feed`, not at the build volume, so there's no URL path that
-reaches them).
+`ghcr.io/wxbet-org/dreamos-buildsystem-feed` -- stock `caddy:2` with
+this dir's `Caddyfile` + `entrypoint.sh` baked in, so the compose
+file is fully self-contained (no sibling files needed at deploy time
+-- Portainer-friendly). Version-locked to the same tag as its
+sibling `dreamos-buildsystem-ubnt18` image so the two always match.
+
+At container start (and every `RESCAN_INTERVAL` seconds after) the
+entrypoint scans the read-only build volume at `/home/builder` and
+materializes a clean symlink tree under `/srv/feed`. Each existing
+MACHINE build gets one symlink directly at its `tmp-glibc/deploy/`
+dir, so the URL layout the box sees matches the on-disk layout 1:1
+-- no URL-rewriting logic on the Caddy side, no fiddling with
+bitbake internals, and nothing outside the deploy dirs is
+HTTP-reachable (sources/, .git/, tmp-glibc/work/, sstate/, ... stay
+physically mounted but Caddy is rooted at `/srv/feed`, not at the
+build volume, so there's no URL path that reaches them).
 
 Two variants matching the build stack's storage modes:
 

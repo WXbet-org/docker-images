@@ -49,8 +49,8 @@ permissions:
   packages: write
 
 env:
-  IMAGES_ALL:      'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-sources simplebuild4 oea-buildsystem-base oea-buildsystem-repo oea-buildsystem'
-  IMAGES_DREAMOS:  'dreamos-buildsystem-base dreamos-buildsystem-ubnt18'
+  IMAGES_ALL:      'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-feed dreamos-buildsystem-sources simplebuild4 oea-buildsystem-base oea-buildsystem-repo oea-buildsystem'
+  IMAGES_DREAMOS:  'dreamos-buildsystem-base dreamos-buildsystem-ubnt18 dreamos-buildsystem-feed'
   IMAGES_S4:       'simplebuild4'
   IMAGES_OEA:      'oea-buildsystem-base oea-buildsystem-repo oea-buildsystem'
 

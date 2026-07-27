@@ -53,7 +53,11 @@
 
 services:
   feed:
-    image: caddy:${TAG:-2}
+    # Composed image with Caddyfile + entrypoint.sh baked in, so this
+    # compose file is fully self-contained -- orchestrators that only
+    # materialize the compose from Git (Portainer, ...) can deploy it
+    # without needing to also fetch sibling files.
+    image: ghcr.io/wxbet-org/dreamos-buildsystem-feed:${TAG:-latest}
     container_name: dreamos-buildsystem-feed
     hostname: dreamos-buildsystem-feed
 
@@ -62,7 +66,8 @@ services:
       - "${FEED_HTTPS_PORT:-8443}:443"
 
     environment:
-      # See Caddyfile for how these two env-vars switch HTTP vs HTTPS.
+      # See the image's Caddyfile for how these two env-vars switch
+      # HTTP vs HTTPS.
       # FEED_DOMAIN unset -> HTTP-only, FEED_ACME_EMAIL is ignored.
       # FEED_DOMAIN set   -> Caddy provisions an LE cert registered
       #                      under FEED_ACME_EMAIL. Default derives an
@@ -73,15 +78,7 @@ services:
       FEED_ACME_EMAIL: "${FEED_ACME_EMAIL:-admin@${FEED_DOMAIN}}"
       RESCAN_INTERVAL: "${RESCAN_INTERVAL:-60}"
 
-    # entrypoint.sh scans the build tree, populates /srv/feed with
-    # symlinks, then exec's caddy. It also loops in the background to
-    # re-scan every RESCAN_INTERVAL seconds so newly built MACHINEs
-    # appear without a container restart.
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
-
     volumes:
-      - "./Caddyfile:/etc/caddy/Caddyfile:ro"
-      - "./entrypoint.sh:/entrypoint.sh:ro"
       # The build stack's data volume mounted read-only, at the SAME
       # path the build container uses (/home/builder) so the symlinks
       # entrypoint.sh writes to point at valid on-container paths.
