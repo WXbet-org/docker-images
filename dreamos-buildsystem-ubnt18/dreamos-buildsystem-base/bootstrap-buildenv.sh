@@ -151,17 +151,32 @@ OSCAMPORT = "8888"
 
 # ================== PACKAGE FEED ==================
 
-# Distro version is coupled to the OE release branch:
-#   krogoth -> opendreambox 2.5
-#   pyro    -> opendreambox 2.6
-# bootstrap-buildenv substitutes @DISTRO_VERSION@ per branch when it
-# writes this file. Change the URL host if you host your own feed.
+# bootstrap-buildenv writes DISTRO_FEED_URI as ONE of two shapes
+# depending on IMAGE_FEED_URL:
 #
-# DISTRO_FEED_CHANNEL is a plain string ("unstable" | "stable" | ...)
-# that becomes a path segment in the feed URL. Flip it to "stable" for
-# release builds; "unstable" is the sensible default for day-to-day work.
+#   IMAGE_FEED_URL UNSET -> upstream default (mirrors dreamboxupdate.com
+#                           exactly, so opkg on stock boxes keeps working):
+#     https://dreamboxupdate.com/opendreambox/<DISTRO_VERSION>/<CHANNEL>/<PR>/<MACHINE>
+#         DISTRO_VERSION : 2.5 (krogoth) / 2.6 (pyro)
+#         PR             : bitbake's per-recipe PACKAGE_REVISION
+#
+#   IMAGE_FEED_URL SET  -> self-hosted (matches dreamos-feed layout):
+#     <IMAGE_FEED_URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
+#         fork    : opendreambox | dreamlegacy
+#         branch  : krogoth | pyro | ...
+#     dreamos-feed fans deploy/deb's subdirs directly into the
+#     per-MACHINE feed dir as symlinks, and adds a sibling `images`
+#     symlink for firmware images -- so URL <machine>/all/foo.deb
+#     resolves straight to <deploy>/deb/all/foo.deb, and
+#     URL <machine>/images/foo.zip to <deploy>/images/<machine>/foo.zip,
+#     with no feed-server rewrite in between.
+#     No PR segment -- self-hosted feeds usually serve latest per MACHINE.
+#
+# DISTRO_FEED_CHANNEL is a plain string ("unstable" | "stable" | ...);
+# flip to "stable" for release builds. "unstable" is the sensible default
+# for day-to-day work.
 DISTRO_FEED_CHANNEL ?= "unstable"
-DISTRO_FEED_URI      = "https://dreamboxupdate.com/opendreambox/@DISTRO_VERSION@/${DISTRO_FEED_CHANNEL}/${PR}/${MACHINE}"
+DISTRO_FEED_URI      = "@FEED_URI@"
 
 
 # ================== PACKAGE SIGNING ==================
@@ -230,13 +245,38 @@ LOCALEXT
         sed -i "s|@GPG_FINGERPRINT@|$GPG_FINGERPRINT|" conf/local-ext.conf
     fi
 
-    # Map OE release branch -> opendreambox distro version for DISTRO_FEED_URI.
-    # Only pyro is 2.6; krogoth and any other/unknown branch default to 2.5.
-    case "$branch" in
-        pyro) distro_version="2.6" ;;
-        *)    distro_version="2.5" ;;
-    esac
-    sed -i "s|@DISTRO_VERSION@|$distro_version|" conf/local-ext.conf
+    # Build the full DISTRO_FEED_URI string. Two shapes selected by
+    # whether IMAGE_FEED_URL is set (see comment block over the
+    # DISTRO_FEED_URI line in the local-ext.conf template above).
+    #
+    # `\${...}` inside the here-strings survives sed and lands in the
+    # config file as literal `${...}` so bitbake -- not this shell --
+    # expands MACHINE / DISTRO_FEED_CHANNEL / PR at recipe time.
+    if [ -n "${IMAGE_FEED_URL:-}" ]; then
+        # Self-hosted: <URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
+        # No trailing /deb -- dreamos-feed fans the deploy/deb/ subdirs
+        # out as individual symlinks directly inside the per-MACHINE
+        # feed dir, so opkg reads .deb feeds at the machine URL
+        # directly (URL <machine>/all/... -> on-disk .../deb/all/...).
+        # Firmware images live at a sibling `images` symlink under the
+        # same machine URL. See dreamos-feed/entrypoint.sh for the
+        # exact symlink layout.
+        # Strip trailing / from the user's URL so we don't emit `//`.
+        feed_uri="${IMAGE_FEED_URL%/}/${fork}/${branch}/\${DISTRO_FEED_CHANNEL}/\${MACHINE}"
+    else
+        # Upstream default: mirror dreamboxupdate.com's exact layout
+        # (fork-agnostic on the /opendreambox/ path per convention).
+        # Map OE release branch -> opendreambox distro version.
+        # Only pyro is 2.6; krogoth and any other/unknown default to 2.5.
+        case "$branch" in
+            pyro) distro_version="2.6" ;;
+            *)    distro_version="2.5" ;;
+        esac
+        feed_uri="https://dreamboxupdate.com/opendreambox/${distro_version}/\${DISTRO_FEED_CHANNEL}/\${PR}/\${MACHINE}"
+    fi
+    # `|` chosen as sed delimiter so URLs with `/` are safe. Unlikely
+    # a URL contains `|`; if it does, the user can escape it themselves.
+    sed -i "s|@FEED_URI@|${feed_uri}|" conf/local-ext.conf
 
     # On the opendreambox fork (WXbet) DEB feed signing actually works,
     # so uncomment the PACKAGE SIGNING block by default. dreamlegacy

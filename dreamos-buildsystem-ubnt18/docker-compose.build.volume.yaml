@@ -3,8 +3,8 @@
 # Container starts, bootstraps the requested BuildEnv (if not already),
 # runs `make image` sequentially for every entry in MACHINES, then exits.
 # Because the build command runs as PID 1, all bitbake output lands in
-# `docker logs <container>` and any orchestrator's log view (Komodo,
-# Portainer, etc.) shows the full build in real time.
+# `docker logs <container>` and any orchestrator's log view shows
+# the full build in real time.
 #
 # When to use this instead of the long-running variants:
 # - CI pipelines that build a firmware image and then tear down
@@ -63,6 +63,12 @@ services:
       # Skip the default four-BuildEnv auto-bootstrap; the command below
       # bootstraps only the single BuildEnv we actually need for this build.
       AUTO_BOOTSTRAP: "0"
+      # Feed host baked into the built image's opkg config.
+      #   Unset -> upstream default (mirrors dreamboxupdate.com exactly):
+      #     https://dreamboxupdate.com/opendreambox/<VERSION>/<CHANNEL>/<PR>/<MACHINE>
+      #   Set   -> self-hosted (matches dreamos-feed's symlink layout):
+      #     <IMAGE_FEED_URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
+      IMAGE_FEED_URL: "${IMAGE_FEED_URL:-}"
       TERM: "${TERM:-xterm-256color}"
       COLORTERM: "${COLORTERM:-truecolor}"
 

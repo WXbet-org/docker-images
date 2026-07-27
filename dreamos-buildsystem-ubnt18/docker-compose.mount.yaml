@@ -56,6 +56,12 @@ services:
       # (opendreambox/{krogoth,pyro}, dreamlegacy/{krogoth,pyro}).
       # Set to 0 to skip and bootstrap manually later.
       AUTO_BOOTSTRAP: "${AUTO_BOOTSTRAP:-1}"
+      # Feed host baked into the built image's opkg config.
+      #   Unset -> upstream default (mirrors dreamboxupdate.com exactly):
+      #     https://dreamboxupdate.com/opendreambox/<VERSION>/<CHANNEL>/<PR>/<MACHINE>
+      #   Set   -> self-hosted (matches dreamos-feed's symlink layout):
+      #     <IMAGE_FEED_URL>/<fork>/<branch>/<CHANNEL>/<MACHINE>
+      IMAGE_FEED_URL: "${IMAGE_FEED_URL:-}"
       # Forward terminal capabilities so the MOTD renders in 256/truecolor
       # instead of falling back to Docker's default TERM=xterm.
       TERM: "${TERM:-xterm-256color}"
