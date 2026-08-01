@@ -22,8 +22,9 @@ COPY docker/deps-to-apt.py docker/deps-to-pip.py /tmp/
 # then a second apt-get pulls the dynamic list derived from deps.yaml.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates dumb-init gosu tzdata openssl \
+       ca-certificates dumb-init tzdata openssl sudo \
        python3 python3-pip python3-yaml \
+       help2man gawk libtool-bin libncurses-dev \
     && apt-get install -y --no-install-recommends \
        $(python3 /tmp/deps-to-apt.py /tmp/deps.yaml) \
     && apt-get install -y --no-install-recommends \
@@ -86,6 +87,39 @@ VOLUME ["/app/data"]
 
 # Web (textual-serve) + MCP (Streamable HTTP or SSE)
 EXPOSE 8080 8181 6274 6277
+
+# --- Non-root builder user + passwordless sudo ------------------------
+# crosstool-NG refuses to run as root. Even outside ct-ng many host-
+# side toolchain builds are safer as non-root. Match the oea-buildsystem
+# pattern: fixed uid/gid 1000, passwordless sudo, `builder`/`builder`.
+#
+# Ubuntu 24.04+ ships a pre-created `ubuntu` user at 1000 — evict it
+# first (idempotent: --force succeeds if user/group is absent).
+#
+# `/app` is chowned so `s4 update`, git operations and per-target
+# build state land as builder. `/app/data` inherits the chown → fresh
+# named volumes copy in with builder-owned content on first mount, so
+# users no longer have to pre-chown host paths for bind mounts of
+# `/app/data` (bind-mount paths still need to be 1000-owned on the
+# host, that's a docker mount-semantics constraint).
+ARG BUILD_USER=builder
+ARG BUILD_UID=1000
+ARG BUILD_GID=1000
+RUN if getent passwd "$BUILD_UID" >/dev/null; then \
+        userdel -r -f "$(getent passwd "$BUILD_UID" | cut -d: -f1)" 2>/dev/null || true; \
+    fi \
+ && if getent group "$BUILD_GID" >/dev/null; then \
+        groupdel -f "$(getent group "$BUILD_GID" | cut -d: -f1)" 2>/dev/null || true; \
+    fi \
+ && groupadd -g "$BUILD_GID" "$BUILD_USER" \
+ && useradd  -m -u "$BUILD_UID" -g "$BUILD_GID" -s /bin/bash "$BUILD_USER" \
+ && echo "${BUILD_USER}:${BUILD_USER}" | chpasswd \
+ && printf '%s ALL=(ALL) NOPASSWD:ALL\nDefaults env_keep += "DEBIAN_FRONTEND"\n' \
+        "$BUILD_USER" > /etc/sudoers.d/$BUILD_USER \
+ && chmod 0440 /etc/sudoers.d/$BUILD_USER \
+ && chown -R "$BUILD_UID:$BUILD_GID" /app
+
+USER builder
 
 # dumb-init is PID 1 → reaps zombies, forwards signals cleanly.
 # entrypoint.py either launches web+mcp per settings.yaml or execs a
