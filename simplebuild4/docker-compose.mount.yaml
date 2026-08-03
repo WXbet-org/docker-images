@@ -33,6 +33,7 @@ services:
   s4:
     image: ghcr.io/wxbet-org/simplebuild4:${S4_TAG:-latest}
     container_name: s4
+    hostname: s4
     ports:
       - "8080:8080"    # Web-TUI (textual-serve)
       - "8181:8181"    # MCP (streamable HTTP)
