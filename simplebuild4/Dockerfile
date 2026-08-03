@@ -88,6 +88,16 @@ LABEL org.opencontainers.image.title="simplebuild4" \
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
+# ttyd — tiny WS-to-PTY bridge that s4-web proxies for menuconfig-in-
+# browser (F6 on a crosstool-NG template). Bound to loopback only in
+# entrypoint.py; all auth is done by s4's HMAC-signed URL gate. Not
+# packaged in ubuntu:26.04, so pull the static musl build from GitHub.
+ARG TTYD_VERSION=1.7.7
+RUN curl -fsSL -o /usr/local/bin/ttyd \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+ && chmod +x /usr/local/bin/ttyd \
+ && /usr/local/bin/ttyd --version
+
 # Web (textual-serve) + MCP (Streamable HTTP or SSE) + sshd
 EXPOSE 8080 8181 6274 6277 22
 
