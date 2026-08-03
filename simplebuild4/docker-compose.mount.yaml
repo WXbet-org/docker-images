@@ -26,6 +26,8 @@
 #   S4_DATA_DIR=/mnt/nvme/s4-data
 #                        # optional: override the on-host location
 #                        # entirely (default: ${HOME}/s4-data).
+#   SSH_PORT=2222        # host port for the container's sshd (default: 2222)
+#                        # login: builder / builder
 
 services:
   s4:
@@ -36,15 +38,19 @@ services:
       - "8181:8181"    # MCP (streamable HTTP)
       - "6274:6274"    # MCP Inspector — client UI (only while running)
       - "6277:6277"    # MCP Inspector — proxy server
+      - "${SSH_PORT:-2222}:22"   # sshd (login: builder / builder)
     volumes:
       # Host path appears at /app/data inside the container. The entry
       # point auto-detects the mount owner and drops root -> that uid,
       # so host-side files stay owned by you.
       - "${S4_DATA_DIR:-${HOME}/s4-data}:/app/data"
     # Propagate host terminal capabilities so Textual gets 256/truecolor
-    # instead of docker's default TERM=xterm (16-color fallback → wrong
-    # theme rendering).
+    # rendering. The image ships sane defaults (TERM=xterm-256color,
+    # COLORTERM=truecolor); a real ssh/desktop terminal that exports its
+    # own TERM (xterm-256color, alacritty, screen-256color, ...) can
+    # override. Windows shells (PowerShell/cmd) often export TERM=unknown
+    # which would break ncurses; the ${:-…} default guards that.
     environment:
-      - TERM
-      - COLORTERM
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
     restart: unless-stopped

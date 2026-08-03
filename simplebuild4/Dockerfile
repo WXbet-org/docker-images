@@ -8,7 +8,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     PYTHONIOENCODING=utf-8 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app:${PATH}"
+    PATH="/app:${PATH}" \
+    TERM=xterm-256color \
+    COLORTERM=truecolor
 
 # --- Dependency spec + extractors -------------------------------------
 # Copy JUST the spec and extractors first, so the apt/pip layers only
@@ -25,6 +27,7 @@ RUN apt-get update \
        ca-certificates dumb-init tzdata openssl sudo \
        python3 python3-pip python3-yaml \
        help2man gawk libtool-bin libncurses-dev \
+       openssh-server openssh-client \
     && apt-get install -y --no-install-recommends \
        $(python3 /tmp/deps-to-apt.py /tmp/deps.yaml) \
     && apt-get install -y --no-install-recommends \
@@ -85,8 +88,8 @@ LABEL org.opencontainers.image.title="simplebuild4" \
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
-# Web (textual-serve) + MCP (Streamable HTTP or SSE)
-EXPOSE 8080 8181 6274 6277
+# Web (textual-serve) + MCP (Streamable HTTP or SSE) + sshd
+EXPOSE 8080 8181 6274 6277 22
 
 # --- Non-root builder user + passwordless sudo ------------------------
 # crosstool-NG refuses to run as root. Even outside ct-ng many host-
@@ -118,6 +121,15 @@ RUN if getent passwd "$BUILD_UID" >/dev/null; then \
         "$BUILD_USER" > /etc/sudoers.d/$BUILD_USER \
  && chmod 0440 /etc/sudoers.d/$BUILD_USER \
  && chown -R "$BUILD_UID:$BUILD_GID" /app
+
+# sshd config: password auth on (builder/builder works out of the box
+# for interactive dev containers), no root login, host keys generated
+# by the entrypoint on first start.
+RUN sed -ri \
+        -e 's/^#?PasswordAuthentication.*/PasswordAuthentication yes/' \
+        -e 's/^#?PermitRootLogin.*/PermitRootLogin no/' \
+        -e 's/^#?UsePAM.*/UsePAM yes/' \
+        /etc/ssh/sshd_config
 
 USER builder
 

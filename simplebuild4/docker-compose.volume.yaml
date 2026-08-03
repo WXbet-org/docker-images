@@ -21,6 +21,8 @@
 #
 # Environment overrides (via .env, shell, or the deploying tool's env):
 #   S4_TAG=2026.04.488   # pin a specific image tag (default: latest)
+#   SSH_PORT=2222        # host port for the container's sshd (default: 2222)
+#                        # login: builder / builder
 #
 # Migrate an existing bind-mount (~/s4-data) into the named volume
 # (run before `docker compose up -d` the first time). The volume name
@@ -47,6 +49,7 @@ services:
       - "8181:8181"    # MCP (streamable HTTP)
       - "6274:6274"    # MCP Inspector — client UI (only while running)
       - "6277:6277"    # MCP Inspector — proxy server
+      - "${SSH_PORT:-2222}:22"   # sshd (login: builder / builder)
     volumes:
       # Docker-managed named volume -- portable, no host-path assumptions.
       # Stored in the Docker daemon's own filesystem, no cross-boundary
@@ -54,11 +57,14 @@ services:
       # (typically 1000) inside the volume, no host-uid mapping needed.
       - s4_data:/app/data
     # Propagate host terminal capabilities so Textual gets 256/truecolor
-    # instead of docker's default TERM=xterm (16-color fallback → wrong
-    # theme rendering).
+    # rendering. The image ships sane defaults (TERM=xterm-256color,
+    # COLORTERM=truecolor); a real ssh/desktop terminal that exports its
+    # own TERM (xterm-256color, alacritty, screen-256color, ...) can
+    # override. Windows shells (PowerShell/cmd) often export TERM=unknown
+    # which would break ncurses; the ${:-…} default guards that.
     environment:
-      - TERM
-      - COLORTERM
+      TERM: "${TERM:-xterm-256color}"
+      COLORTERM: "${COLORTERM:-truecolor}"
     restart: unless-stopped
 
 volumes:
