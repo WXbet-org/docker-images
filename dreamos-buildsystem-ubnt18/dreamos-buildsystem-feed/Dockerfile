@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+#
 # dreamos-buildsystem-feed image
 #
 # Stock Caddy 2 with the feed's Caddyfile + startup script baked in
@@ -9,7 +11,6 @@
 FROM caddy:2
 
 COPY Caddyfile   /etc/caddy/Caddyfile
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod 0555 /entrypoint.sh
+COPY --chmod=0555 entrypoint.sh /entrypoint.sh
 
 ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]
