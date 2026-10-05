@@ -172,8 +172,18 @@ RUN ln -sf bash /bin/sh
 # Installed as `mcli` (MinIO's own recommended alternate name) to
 # avoid clashing with Midnight Commander (apt package `mc`) which is
 # in the apt list above.
+#
+# Pinned to the last open-source release on github.com/minio/mc.
+# Upstream retired the `dl.min.io/client/mc/release/...` endpoint when
+# mc was absorbed into the closed-source AIStor product (every URL
+# under that path now returns HTTP 410 Gone); the GitHub release
+# assets for the last Apache-licensed build are permanent, so pin
+# there instead. SHA-256 verified against the upstream shasum.
+ARG MC_RELEASE=RELEASE.2025-08-13T08-35-41Z
+ARG MC_SHA256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
 RUN curl -fsSL -o /usr/local/bin/mcli \
-        https://dl.min.io/client/mc/release/linux-amd64/mc \
+        "https://github.com/minio/mc/releases/download/${MC_RELEASE}/mc.linux-amd64.${MC_RELEASE}" \
+ && echo "${MC_SHA256}  /usr/local/bin/mcli" | sha256sum -c - \
  && chmod 0755 /usr/local/bin/mcli
 
 ENV LANG=en_US.UTF-8
